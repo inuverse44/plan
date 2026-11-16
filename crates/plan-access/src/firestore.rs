@@ -1,11 +1,11 @@
-//! FirestorePlans：計画を Firestore（REST）に置く。Cloud Run のサーバーが使う。
+//! FirestorePlans: plans in Firestore (REST). Used by the server on Cloud Run.
 //!
-//!   epics/{key}        エピック 1 つ分の計画（Plan の JSON をそのまま文書の項目に。コンソールでも読める）
-//!   history/{id 12 桁}  変更 1 つで 1 文書（id・at・actor・epic・op・payload）。id は全体の通し番号
-//!   meta/state         version（history の最後の id）
+//!   epics/{key}        one epic's plan (the Plan JSON as the document's fields, readable in the console)
+//!   history/{id, 12 digits}  one document per change (id, at, actor, epic, op, payload); id is a global sequence
+//!   meta/state         version (the last history id)
 //!
-//! 直すときは「読む → mutate → validate → 書く ＋ history」を 1 つのトランザクションで行う（SQLite 版と同じ約束）。
-//! Firestore の配列は配列を直に入れられないので、配列の中の配列は {"_a": [...]} に包む
+//! Edits run read → mutate → validate → write + history in one transaction (the same contract as the SQLite store).
+//! Firestore arrays cannot hold arrays, so an array inside an array is wrapped as {"_a": [...]}
 use crate::plan_access::{mutate, PlanAccess, Validate};
 use crate::token::{e, Tokens};
 use chrono::NaiveDate;
@@ -16,11 +16,11 @@ use std::sync::Mutex;
 pub struct FirestorePlans {
     base: String,
     tokens: Tokens,
-    /// サーバーは 1 台（max-instances 1）で、書くのは全部ここを通る。だから version は覚えておける
+    /// There is one server (max-instances 1) and every write goes through it, so the version can be cached
     version: Mutex<Option<i64>>,
 }
 
-// ---------- JSON ↔ Firestore の値 ----------
+// ---------- JSON ↔ Firestore values ----------
 
 fn to_fs(v: &Value, in_array: bool) -> Value {
     match v {
@@ -57,7 +57,7 @@ fn from_fields(f: &Value) -> Value {
 }
 
 fn plan_from_doc(doc: &Value) -> Result<Plan, Vec<Issue>> {
-    serde_json::from_value(from_fields(&doc["fields"])).map_err(|x| e(format!("Firestore の計画を読めない：{x}")))
+    serde_json::from_value(from_fields(&doc["fields"])).map_err(|x| e(format!("cannot read the plan from Firestore: {x}")))
 }
 
 impl FirestorePlans {
@@ -73,7 +73,7 @@ impl FirestorePlans {
         match res {
             Ok(r) => Ok(Some(r.into_json().map_err(e)?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
-            Err(ureq::Error::Status(c, r)) => Err(e(format!("Firestore {c}：{}", r.into_string().unwrap_or_default()))),
+            Err(ureq::Error::Status(c, r)) => Err(e(format!("Firestore {c}: {}", r.into_string().unwrap_or_default()))),
             Err(x) => Err(e(x)),
         }
     }
@@ -84,7 +84,7 @@ impl FirestorePlans {
     }
     fn begin(&self) -> Result<String, Vec<Issue>> {
         let v = self.call("POST", &format!("{}:beginTransaction", self.base), Some(json!({})))?.unwrap_or_default();
-        v["transaction"].as_str().map(str::to_string).ok_or_else(|| e("トランザクションを始められない"))
+        v["transaction"].as_str().map(str::to_string).ok_or_else(|| e("cannot begin a transaction"))
     }
     fn commit(&self, tx: Option<&str>, writes: Vec<Value>) -> Result<(), Vec<Issue>> {
         let mut b = json!({ "writes": writes });
@@ -95,7 +95,7 @@ impl FirestorePlans {
 
     fn rollback(&self, tx: &str) { let _ = self.call("POST", &format!("{}:rollback", self.base), Some(json!({ "transaction": tx }))); }
 
-    /// トランザクションの中で f を動かす。誤りなら rollback（ロックを残さない）。ぶつかった（409）ときは 3 回まで書き直す
+    /// Run f in a transaction. On error, roll back (do not leave locks). On contention (409), retry up to 3 times
     fn in_tx(&self, f: impl Fn(&str) -> Result<(), Vec<Issue>>) -> Result<(), Vec<Issue>> {
         for n in 0..3 {
             let tx = self.begin()?;
@@ -116,7 +116,7 @@ impl FirestorePlans {
         Ok(self.get("meta/state", tx)?.map(|d| from_fields(&d["fields"])["version"].as_i64().unwrap_or(0)).unwrap_or(0))
     }
 
-    /// 計画を書き、変更を history に足す。1 つのトランザクションで（tx が無ければ新しく始める）
+    /// Write the plan and append the changes to history, in one transaction
     fn write(&self, tx: &str, actor: &str, epic: &str, plan: Option<&Plan>, logs: Vec<(String, String)>) -> Result<(), Vec<Issue>> {
         let v0 = self.read_version(Some(tx))?;
         let mut w = vec![];
@@ -142,14 +142,14 @@ impl FirestorePlans {
     }
 }
 
-/// 時刻（日本時間、YYYY-MM-DD HH:MM:SS）。SQLite 版の datetime('now','localtime') と同じ形
+/// Time in JST (YYYY-MM-DD HH:MM:SS), the same format as SQLite's datetime('now','localtime')
 fn now_jst() -> String {
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0) + 9 * 3600;
     chrono::DateTime::from_timestamp(secs, 0).map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default()
 }
 fn urlenc(s: &str) -> String { s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect() }
 
-/// 新しいエピックの既定（SQLite 版の既定と同じ）。暦と人はほかのエピックから写す
+/// Defaults for a new epic (same as the SQLite store). Calendar and people are copied from another epic
 fn new_plan(key: &str, name: &str, start: NaiveDate, like: Option<&Plan>) -> Plan {
     Plan {
         key: key.into(), title: name.into(), description: String::new(), start, start_pm: false, deadline: None, deadline_task: None, deadline_label: None,
@@ -162,7 +162,7 @@ fn new_plan(key: &str, name: &str, start: NaiveDate, like: Option<&Plan>) -> Pla
 
 impl PlanAccess for FirestorePlans {
     fn read_plan(&self, epic: &str) -> Result<Plan, Vec<Issue>> {
-        let d = self.get(&format!("epics/{epic}"), None)?.ok_or_else(|| e(format!("エピック {epic} が無い")))?;
+        let d = self.get(&format!("epics/{epic}"), None)?.ok_or_else(|| e(format!("no epic {epic}")))?;
         let mut p = plan_from_doc(&d)?; p.key = epic.into(); Ok(p)
     }
 
@@ -175,7 +175,7 @@ impl PlanAccess for FirestorePlans {
     }
 
     fn apply(&self, epic: &str, actor: &str, ops: &[EditOp], validate: Validate) -> Result<(), Vec<Issue>> { self.in_tx(|tx| {
-        let d = self.get(&format!("epics/{epic}"), Some(tx))?.ok_or_else(|| e(format!("エピック {epic} が無い")))?;
+        let d = self.get(&format!("epics/{epic}"), Some(tx))?.ok_or_else(|| e(format!("no epic {epic}")))?;
         let mut plan = plan_from_doc(&d)?; plan.key = epic.into();
         for op in ops { mutate(&mut plan, op).map_err(|i| vec![i])?; }
         for c in plan.comments.iter_mut().filter(|c| c.at.is_empty()) { c.at = now_jst(); c.by = actor.into(); }
@@ -186,10 +186,10 @@ impl PlanAccess for FirestorePlans {
     }) }
 
     fn create_epic(&self, key: &str, name: &str, start: NaiveDate, actor: &str) -> Result<(), Vec<Issue>> {
-        if key.is_empty() || key.contains(|c: char| c.is_whitespace() || c == '/') { return Err(e("key は空白と / を含まない文字で")); }
+        if key.is_empty() || key.contains(|c: char| c.is_whitespace() || c == '/') { return Err(e("the key must not contain spaces or /")); }
         let like = self.all_plans()?.into_iter().next();
         self.in_tx(|tx| {
-            if self.get(&format!("epics/{key}"), Some(tx))?.is_some() { return Err(e(format!("エピック {key} は既にある"))); }
+            if self.get(&format!("epics/{key}"), Some(tx))?.is_some() { return Err(e(format!("epic {key} already exists"))); }
             let p = new_plan(key, name, start, like.as_ref());
             self.write(tx, actor, key, Some(&p), vec![("create_epic".into(), json!({ "key": key, "name": name, "start": start }).to_string())])
         })
@@ -197,15 +197,15 @@ impl PlanAccess for FirestorePlans {
 
     fn delete_epic(&self, key: &str, actor: &str) -> Result<(), Vec<Issue>> {
         self.in_tx(|tx| {
-            let d = self.get(&format!("epics/{key}"), Some(tx))?.ok_or_else(|| e(format!("エピック {key} が無い")))?;
+            let d = self.get(&format!("epics/{key}"), Some(tx))?.ok_or_else(|| e(format!("no epic {key}")))?;
             let plan = plan_from_doc(&d)?;
-            // 消した中身は記録に残す（取り戻せるように）
+            // Keep the deleted plan in the history (so it can be restored)
             self.write(tx, actor, key, None, vec![("delete_epic".into(), serde_json::to_string(&plan).unwrap())])
         })
     }
 
     fn import(&self, plan: &Plan, actor: &str) -> Result<(), Vec<Issue>> {
-        if plan.key.is_empty() { return Err(e("取り込む計画に key が無い")); }
+        if plan.key.is_empty() { return Err(e("the imported plan has no key")); }
         self.in_tx(|tx| self.write(tx, actor, &plan.key, Some(plan), vec![("import".into(), json!({ "tasks": plan.tasks.len(), "scenarios": plan.scenarios.len() }).to_string())]))
     }
 

@@ -1,11 +1,11 @@
-//! ScenarioEngine：隠す変化は「案の作り方」。今は基の作業に drop・set・add を当てる
+//! ScenarioEngine. Encapsulates how scenarios are built; today: drop, set and add applied to the base tasks
 use plan_contracts::{Issue, Plan, Scenario, TaskPatch, TaskSpec};
 
 pub fn apply_patch(t: &mut TaskSpec, p: &TaskPatch) { apply(t, p) }
 
 pub fn build(plan: &Plan) -> Result<Vec<Scenario>, Vec<Issue>> {
     if plan.scenarios.is_empty() {
-        return Ok(vec![Scenario { key: "base".into(), name: "基の案".into(), note: String::new(), tasks: plan.tasks.clone() }]);
+        return Ok(vec![Scenario { key: "base".into(), name: "Base".into(), note: String::new(), tasks: plan.tasks.clone() }]);
     }
     let mut out = Vec::new();
     let mut errs = Vec::new();
@@ -14,12 +14,12 @@ pub fn build(plan: &Plan) -> Result<Vec<Scenario>, Vec<Issue>> {
         for (tid, patch) in &s.set {
             match ts.iter_mut().find(|t| &t.id == tid) {
                 Some(t) => apply(t, patch),
-                None => errs.push(Issue::error(format!("set：作業 {tid} が無い")).at(Some(&s.key), None)),
+                None => errs.push(Issue::error(format!("set: no task {tid}")).at(Some(&s.key), None)),
             }
         }
         for a in &s.add {
             if ts.iter().any(|t| t.id == a.id) {
-                errs.push(Issue::error(format!("add：作業 {} は基にある（直すなら set）", a.id)).at(Some(&s.key), None));
+                errs.push(Issue::error(format!("add: task {} already exists in the base (use set to change it)", a.id)).at(Some(&s.key), None));
             } else {
                 ts.push(a.clone());
             }

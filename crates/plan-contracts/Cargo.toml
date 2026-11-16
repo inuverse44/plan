@@ -9,5 +9,5 @@ chrono.workspace = true
 ts-rs = { version = "12", optional = true, features = ["chrono-impl", "no-serde-warnings"] }
 
 [features]
-# 画面（TypeScript）の型を Rust の型から作る：cargo test -p plan-contracts --features ts
+# Generate the UI's TypeScript types from the Rust types: cargo test -p plan-contracts --features ts
 ts = ["dep:ts-rs"]

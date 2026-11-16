@@ -1,7 +1,7 @@
-//! EstimationEngine：隠す変化は「見積もりの決まり」（PERT・丸め・稼働率の掛け方・人ごとの率）
+//! EstimationEngine. Encapsulates estimation: PERT, rounding, how utilization applies, per-person rates
 use plan_contracts::{EstKind, Estimate, Kind, Plan, Task, TaskSpec};
 
-/// 見積もり 1 つを、選んだ種類の値にする。期待値は PERT を step に丸める（偶数への丸め）
+/// One estimate as the chosen kind. Expected = PERT rounded to step (round half to even)
 pub fn value(e: &Estimate, kind: EstKind, step: f64) -> f64 {
     match *e {
         Estimate::One(v) => v,
@@ -14,7 +14,7 @@ pub fn value(e: &Estimate, kind: EstKind, step: f64) -> f64 {
     }
 }
 
-/// 値が「ある」か（0 の 1 つの数は無いのと同じ。案で工数を外すのに使う）
+/// Whether a value is present (a single 0 counts as absent; scenarios use it to drop an effort)
 pub fn present(e: &Option<Estimate>) -> bool {
     match e { None => false, Some(Estimate::One(v)) => *v != 0.0, Some(Estimate::Three(..)) => true }
 }
@@ -46,7 +46,7 @@ pub fn resolve(plan: &Plan, tasks: &[TaskSpec], est: EstKind, rate: f64) -> Vec<
     }).collect()
 }
 
-/// 半日の数から工数（人日）に戻す（画面で日数を変えたとき、計画ファイルに書く値）
+/// Half-days back to effort in person-days (written to the plan when the duration is changed in the UI)
 pub fn effort_for(t: &Task, dur: usize, rate: f64) -> f64 {
     match t.kind {
         Kind::Wait => dur as f64 / 2.0,

@@ -1,5 +1,5 @@
-//! Manager：ユースケースの順番だけを持つ。
-//! PlanningManager は確かめる・評価する・動かしてみる、PlanEditingManager は作る・直す・つなぐ・案を複製する
+//! Managers: only the order of the use cases.
+//! PlanningManager checks, evaluates and tries moves; PlanEditingManager creates, edits, links and clones scenarios
 use plan_access::{CalendarAccess, PlanAccess};
 use std::sync::Arc;
 use plan_contracts::*;
@@ -59,14 +59,14 @@ impl PlanningManager {
 
     pub fn what_if(&self, epic: &str, scenario_key: &str, rate: f64, est: EstKind, changes: &[Change]) -> Result<RunResult, Vec<Issue>> {
         let l = self.load(epic)?;
-        let sc = l.scenarios.iter().find(|s| s.key == scenario_key).ok_or_else(|| vec![Issue::error(format!("案 {scenario_key} が無い"))])?;
+        let sc = l.scenarios.iter().find(|s| s.key == scenario_key).ok_or_else(|| vec![Issue::error(format!("no scenario {scenario_key}"))])?;
         run(&l, sc, rate, est, changes).map_err(|e| vec![e])
     }
 
-    /// 動かしてみた変更を、計画を直す編集にする（画面の「保存」）
+    /// Turn tried moves into edits of the plan (Save in the UI)
     pub fn changes_to_ops(&self, epic: &str, scenario_key: &str, rate: f64, est: EstKind, changes: &[Change]) -> Result<Vec<EditOp>, Vec<Issue>> {
         let l = self.load(epic)?;
-        let sc = l.scenarios.iter().find(|s| s.key == scenario_key).ok_or_else(|| vec![Issue::error("案が無い")])?;
+        let sc = l.scenarios.iter().find(|s| s.key == scenario_key).ok_or_else(|| vec![Issue::error("no such scenario")])?;
         let tasks = estimation::resolve(&l.plan, &sc.tasks, est, rate);
         let base = l.plan.scenarios.is_empty();
         Ok(changes.iter().filter_map(|c| {
@@ -82,7 +82,7 @@ impl PlanningManager {
     }
 }
 
-/// 計画を作る・直す。直す前後に Engine で確かめ、誤りのある変更は書かない
+/// Create and edit plans. Edits are checked with the engines; an edit with errors is not written
 pub struct PlanEditingManager {
     plan_access: Arc<dyn PlanAccess + Send + Sync>,
 }
@@ -101,7 +101,7 @@ impl PlanEditingManager {
         self.plan_access.apply(epic, actor, ops, &validate)
     }
 
-    /// 別の置き場（TOML など）の計画を取り込む
+    /// Import a plan from another store (TOML, ...)
     pub fn import(&self, from: &dyn PlanAccess, key: Option<&str>, actor: &str) -> Result<String, Vec<Issue>> {
         let mut p = from.read_plan("")?;
         if let Some(k) = key { p.key = k.to_string(); }
@@ -112,7 +112,7 @@ impl PlanEditingManager {
     }
 }
 
-/// 当てた後の計画の誤り（案が組めない・依存が輪・先行の打ち間違い など）
+/// Errors in the edited plan (a scenario cannot be built, a dependency loop, a mistyped predecessor, ...)
 fn validate(p: &Plan) -> Vec<Issue> {
     match scenario::build(p) {
         Ok(sc) => analysis::inspect(p, &sc).into_iter().filter(|i| i.level == Level::Error).collect(),
