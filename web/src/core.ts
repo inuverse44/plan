@@ -24,6 +24,8 @@ interface ViewCtx {
   current(id: string): TaskView | undefined;
   pickRun(scenario: string, rate: number): void;
   dragged: boolean;
+  /** Other epics' loads (their default runs), for people who work on several epics. Empty in an exported page */
+  others: EpicLoad[];
 }
 type View = (el: HTMLElement, ctx: ViewCtx) => void;
 type ColorName = FloatColor | 'muted' | 'accent' | 'focus';

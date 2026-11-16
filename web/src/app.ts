@@ -31,6 +31,8 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   const key = () => `${st.s}|${fmt(st.r)}|${st.e}`;
   const save = () => { try { if (st.epic) st.prefs[st.epic] = { s: st.s, r: st.r, e: st.e }; localStorage.setItem(KEEP, JSON.stringify({ view: st.view, level: st.level, prefs: st.prefs })) } catch { } };
   const api = async <T = unknown>(path: string, body?: unknown): Promise<ApiRes<T>> => (await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) })).json();
+  // Other epics' loads (people across epics); see loadOthers
+  let others: EpicLoad[] = [];
   // Child element that is known to exist
   const q = <T extends Element = HTMLElement>(root: ParentNode, sel: string) => root.querySelector(sel) as T;
   const issueText = (is: Issue[]) => is.map(i => (i.scenario ? `[${i.scenario}] ` : '') + (i.task ? i.task + ': ' : '') + i.message).join('\n');
@@ -84,6 +86,15 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     } else plan = boot.plan;
     if (!keepChanges) { st.changes = {}; st.hist = {}; st.fut = {} }
     if (evaluate()) render();
+    if (boot.mode === 'live') loadOthers(k);
+  }
+
+  // Other epics' loads for the Load view (people across epics). Fetched after the epic is shown; renders again when they arrive
+  async function loadOthers(k: string) {
+    const res = await api<EpicLoad[]>('/api/loads');
+    if (!res.ok || st.epic !== k) return;
+    others = res.data.filter(l => l.epic !== k && Object.keys(l.load).length);
+    if (st.view === 'load') render();
   }
 
   // Send edits to the server (stored there), then reload
@@ -286,7 +297,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
       link: (from, to) => { const t = cur.tasks.find(x => x.id === to); if (t && !t.after.includes(from)) setTask(to, { after: [...t.after, from] }) },
       change, commit, current: id => curRun().tasks.find(t => t.id === id),
       pickRun: (s, r) => { st.s = s; st.r = fmt(r); st.view = 'gantt'; save(); render() },
-      dragged: false,
+      dragged: false, others,
     };
     (P.views[st.view] || P.views.gantt)($('view'), ctx);
   }

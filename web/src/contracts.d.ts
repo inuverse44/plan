@@ -130,6 +130,16 @@ declare type RunResult = { key: string, scenario: string, rate: number, est: Est
  */
 tasks: Array<TaskView>, end: number, target: number, slack_to_deadline: number | null, risk: Risk | null, effort: { [key in string]: number }, effort_total: number, efficiency: number | null, load: { [key in string]: { [key in string]: number } }, critical_path: Array<string>, };
 
+declare type EpicLoad = { epic: string, name: string, scenario: string, rate: number, est: EstKind, 
+/**
+ * Person → date → effort (person-days); a whole day of one person is 1
+ */
+load: { [key in string]: { [key in string]: number } }, 
+/**
+ * Why the epic could not be evaluated (then load is empty)
+ */
+issues: Array<Issue>, };
+
 declare type ScenarioInfo = { key: string, name: string, note: string, };
 
 declare type Evaluation = { key: string, stories: Array<Story>, title: string, description: string, deadline: string | null, deadline_task: string | null, deadline_label: string | null, calendar: BusinessCalendar, resources: { [key in string]: Resource }, scenarios: Array<ScenarioInfo>, rates: Array<number>, estimates: Array<EstKind>, runs: Array<RunResult>, issues: Array<Issue>, };

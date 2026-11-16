@@ -57,6 +57,24 @@ impl PlanningManager {
         })
     }
 
+    /// Every epic's load (its default run), to see people who work on several epics. Each epic is scheduled on its own, as before;
+    /// this only adds the loads up. An epic that cannot be evaluated comes back with its issues and no load
+    pub fn epic_loads(&self) -> Result<Vec<EpicLoad>, Vec<Issue>> {
+        Ok(self.plan_access.list_epics()?.into_iter().map(|e| {
+            let one = || -> Result<EpicLoad, Vec<Issue>> {
+                let l = self.load(&e.key)?;
+                let issues = analysis::inspect(&l.plan, &l.scenarios);
+                if issues.iter().any(|i| i.level == Level::Error) { return Err(issues); }
+                let sc = l.scenarios.first().ok_or_else(|| vec![Issue::error("no scenario")])?;
+                let rate = *l.plan.rates.first().unwrap_or(&1.0);
+                let est = if l.plan.estimates.contains(&EstKind::E) { EstKind::E } else { *l.plan.estimates.first().unwrap_or(&EstKind::E) };
+                let r = run(&l, sc, rate, est, &[]).map_err(|i| vec![i])?;
+                Ok(EpicLoad { epic: e.key.clone(), name: l.plan.title.clone(), scenario: sc.key.clone(), rate, est, load: r.load, issues: vec![] })
+            };
+            one().unwrap_or_else(|is| EpicLoad { epic: e.key.clone(), name: e.name.clone(), scenario: String::new(), rate: 1.0, est: EstKind::E, load: Default::default(), issues: is })
+        }).collect())
+    }
+
     pub fn what_if(&self, epic: &str, scenario_key: &str, rate: f64, est: EstKind, changes: &[Change]) -> Result<RunResult, Vec<Issue>> {
         let l = self.load(epic)?;
         let sc = l.scenarios.iter().find(|s| s.key == scenario_key).ok_or_else(|| vec![Issue::error(format!("no scenario {scenario_key}"))])?;

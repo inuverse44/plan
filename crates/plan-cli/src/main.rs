@@ -1,13 +1,14 @@
 //! CLI client: the `plan` command for people and AI to read and edit plans. Plans live in SQLite (PLAN_DB, default data/plan.db in the repository)
 //!
 //!   read    plan epics | dump E | check E | calc E | show E [-s scenario -r 0.6 -e e] | why E TASK | json E | log [E]
+//!           plan load [PERSON]  people across epics: each epic's default run added up per day, days over 100%
 //!   create  plan epic add KEY NAME START | epic rm KEY | import F.toml [--key K] | new F.toml (a TOML template)
 //!   edit    plan task add E KEY k=v … | task set E KEY k=v … [-s scenario] | task rm E KEY
 //!           plan dep add E TASK PRED | dep rm E TASK PRED | story set E KEY name=… | scenario clone E FROM|- KEY NAME | scenario rm E KEY
 //!   batch   plan apply E ops.json ("-" for stdin)  apply a list of edits at once; any error writes nothing
 //!   machine every command accepts --json and returns {"ok":true,"data":…} or {"ok":false,"issues":[…]}
 //!   ui      plan serve [--port N] [--no-open] | export E [out.html]
-//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log apply) for AI assistants
+//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load apply) for AI assistants
 //!   k=v     name short story ticket deliverable note owner=a,b after=a,b needs=prod,db effort=1 or 1,2,4 wait=2 not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
 //!   E may be a path to a .toml file: the file is read directly, without the DB
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local
@@ -156,6 +157,55 @@ fn impact_text(i: &serde_json::Value) -> String {
     if n > 0 { out += &format!("\n  {n} other run(s) moved (plan calc)"); }
     out
 }
+/// People across epics: each epic's default run, added up per person and day. A day over 1 (one person's whole day) is over 100%
+pub fn load_data(person: Option<&str>) -> Result<serde_json::Value, Vec<Issue>> {
+    use std::collections::BTreeMap;
+    let ls = PlanningManager::new(store(), Arc::new(JpRuleCalendar)).epic_loads()?;
+    let mut by: BTreeMap<&str, BTreeMap<NaiveDate, BTreeMap<&str, f64>>> = BTreeMap::new();
+    for l in &ls {
+        for (p, days) in &l.load {
+            if person.is_some_and(|x| x != p) { continue; }
+            for (d, v) in days { if *v > 0.0 { *by.entry(p).or_default().entry(*d).or_default().entry(&l.epic).or_default() += v; } }
+        }
+    }
+    let r2 = |x: f64| (x * 100.0).round() / 100.0;
+    let people: serde_json::Map<String, serde_json::Value> = by.iter().map(|(p, days)| {
+        let ds: Vec<serde_json::Value> = days.iter().map(|(d, es)| { let total: f64 = es.values().sum();
+            serde_json::json!({ "date": d, "total": r2(total), "over": total > 1.0 + 1e-6, "by_epic": es.iter().map(|(e, v)| (e.to_string(), serde_json::json!(r2(*v)))).collect::<serde_json::Map<_, _>>() }) }).collect();
+        let over: Vec<&serde_json::Value> = ds.iter().filter(|d| d["over"] == serde_json::json!(true)).map(|d| &d["date"]).collect();
+        let epics: std::collections::BTreeSet<&str> = days.values().flat_map(|es| es.keys().copied()).collect();
+        (p.to_string(), serde_json::json!({ "epics": epics, "over": over, "days": ds }))
+    }).collect();
+    Ok(serde_json::json!({
+        "epics": ls.iter().map(|l| serde_json::json!({ "epic": l.epic, "name": l.name, "scenario": l.scenario, "rate": l.rate, "est": l.est, "issues": l.issues })).collect::<Vec<_>>(),
+        "people": people,
+    }))
+}
+
+fn load(person: Option<&str>) {
+    let d = load_data(person).unwrap_or_else(|e| die(&e));
+    if json() { return say("", d); }
+    println!("# Load across epics (each epic's default run; 1 = one person's whole day)\n");
+    for e in d["epics"].as_array().unwrap() {
+        let is = e["issues"].as_array().map(|x| x.len()).unwrap_or(0);
+        if is > 0 { println!("- {}: not evaluated ({is} issue(s); plan check {})", e["epic"].as_str().unwrap_or(""), e["epic"].as_str().unwrap_or("")); }
+        else { println!("- {}: {} · {} · {}", e["epic"].as_str().unwrap_or(""), e["scenario"].as_str().unwrap_or(""), pct(e["rate"].as_f64().unwrap_or(1.0)), e["est"].as_str().unwrap_or("")); }
+    }
+    for (p, v) in d["people"].as_object().unwrap() {
+        let epics: Vec<&str> = v["epics"].as_array().unwrap().iter().filter_map(|x| x.as_str()).collect();
+        let days = v["days"].as_array().unwrap();
+        let peak = days.iter().filter_map(|x| x["total"].as_f64()).fold(0.0, f64::max);
+        let over: Vec<&serde_json::Value> = days.iter().filter(|x| x["over"] == serde_json::json!(true)).collect();
+        println!("\n## {p} ({}): {} day(s) over 100%, peak {}", epics.join(", "), over.len(), pct(peak));
+        if over.is_empty() { continue; }
+        println!("\n| Date | Total | {} |\n|---|---|{}", epics.join(" | "), "---|".repeat(epics.len()));
+        for x in over {
+            let cell = |e: &str| x["by_epic"].get(e).and_then(|v| v.as_f64()).map(fmt_num).unwrap_or_default();
+            println!("| {} | {} | {} |", label(NaiveDate::parse_from_str(x["date"].as_str().unwrap(), "%Y-%m-%d").unwrap()), pct(x["total"].as_f64().unwrap()), epics.iter().map(|e| cell(e)).collect::<Vec<_>>().join(" | "));
+        }
+    }
+}
+
 /// check: all issues; ok is false when any is an error
 pub fn check_data(target: &str) -> (bool, Vec<Issue>) {
     let (m, ep) = planning(target);
@@ -362,6 +412,7 @@ fn main() {
             let ops: Vec<EditOp> = serde_json::from_str(&text).unwrap_or_else(|e| die(&[Issue::error(format!("edits must be a JSON list: {e}. Example: [{{\"op\":\"set_task\",\"key\":\"T1\",\"patch\":{{\"effort\":2}}}}]"))]));
             edit(&a(1), ops)
         }
+        "load" => load(pos.get(1).map(String::as_str)),
         "log" => {
             if json() { return say("", log_data(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e))); }
             let hs = PlanEditingManager::new(store()).history(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e));

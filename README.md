@@ -41,6 +41,7 @@ plan apply KEY ops.json                      # apply a list of edits at once; an
 plan export KEY out.html                     # a single self-contained HTML page (interactive, read-only)
 plan serve [--port N] [--no-open]            # the UI and its HTTP API
 plan push [KEY]                              # copy epics from the local SQLite to the server
+plan load [PERSON]                           # people across epics: each epic's default run added up per day, days over 100%
 plan mcp                                     # an MCP server on stdin/stdout for AI assistants
 ```
 
@@ -79,7 +80,7 @@ plan1 · 1.0 · e: target 2026-12-17 → 2027-01-20, finish 2026-12-22 → 2027-
 
 | Tool | Same as |
 |---|---|
-| `epics`, `dump`, `show`, `calc`, `why`, `check`, `log` | the commands of the same name (read only) |
+| `epics`, `dump`, `show`, `calc`, `why`, `check`, `log`, `load` | the commands of the same name (read only) |
 | `apply` | `plan apply` (all edits or none). The history records them as `mcp` |
 
 ```sh
@@ -123,6 +124,7 @@ Moves are re-planned at once; the original position stays as a dashed outline. *
 | Estimates | `[optimistic, most likely, pessimistic]`; expected = PERT (o + 4m + p) / 6, rounded to 0.5 |
 | People | One task at a time per person. Two owners progress only when both are free. Days off are skipped |
 | Order | Least float first (latest start of the resource-free critical-path pass), back-filling gaps |
+| Across epics | Each epic is scheduled on its own. `plan load`, the MCP tool `load` and the Load view add up every epic's default run (first scenario, first utilization, `e`) per person and day; above one person's whole day is over. Nothing is moved automatically |
 | Resources | Things a task needs besides people (`needs`): an environment, a room, an approval board. A task is not placed in the off periods of what it needs and does not straddle them (a release freeze is `resources.prod`). Unlike people, any number of tasks can use a resource at once |
 | Float | The largest delay of one task, from where it is placed, that does not move the end (owners' availability and resources included). Free float: without moving the next task |
 | Colors | Float 0 = critical (orange); ≤ `colors.red` days low, ≤ `colors.yellow` mid, above high (blue, dark to light) |
