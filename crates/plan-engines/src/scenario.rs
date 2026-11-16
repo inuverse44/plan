@@ -1,5 +1,5 @@
 //! ScenarioEngine. Encapsulates how scenarios are built; today: drop, set and add applied to the base tasks
-use plan_contracts::{Issue, Plan, Scenario, TaskPatch, TaskSpec};
+use plan_contracts::{EstKind, Issue, Plan, Scenario, TaskPatch, TaskSpec};
 
 pub fn apply_patch(t: &mut TaskSpec, p: &TaskPatch) { apply(t, p) }
 
@@ -27,6 +27,13 @@ pub fn build(plan: &Plan) -> Result<Vec<Scenario>, Vec<Issue>> {
         out.push(Scenario { key: s.key.clone(), name: s.name.clone(), note: s.note.clone(), tasks: ts });
     }
     if errs.is_empty() { Ok(out) } else { Err(errs) }
+}
+
+/// The run shown when only one is wanted (e.g. people's load across epics): the first scenario at the first rate, expected estimates if the plan has them
+pub fn default_run<'a>(plan: &Plan, scenarios: &'a [Scenario]) -> Option<(&'a Scenario, f64, EstKind)> {
+    let rate = plan.rates.first().copied().unwrap_or(1.0);
+    let est = if plan.estimates.contains(&EstKind::E) { EstKind::E } else { plan.estimates.first().copied().unwrap_or(EstKind::E) };
+    scenarios.first().map(|sc| (sc, rate, est))
 }
 
 fn apply(t: &mut TaskSpec, p: &TaskPatch) {

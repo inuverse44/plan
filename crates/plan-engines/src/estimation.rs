@@ -1,5 +1,5 @@
 //! EstimationEngine. Encapsulates estimation: PERT, rounding, how utilization applies, per-person rates
-use plan_contracts::{EstKind, Estimate, Kind, Plan, Task, TaskSpec};
+use plan_contracts::{EstKind, Estimate, Kind, Plan, Task, TaskPatch, TaskSpec};
 
 /// One estimate as the chosen kind. Expected = PERT rounded to step (round half to even)
 pub fn value(e: &Estimate, kind: EstKind, step: f64) -> f64 {
@@ -44,6 +44,12 @@ pub fn resolve(plan: &Plan, tasks: &[TaskSpec], est: EstKind, rate: f64) -> Vec<
         };
         Task { id: t.id.clone(), kind, dur, val, owners, after: t.after.clone(), needs: t.needs.clone(), not_before: t.not_before, fixed: t.fixed }
     }).collect()
+}
+
+/// The edit that gives a task a new duration (half-days): a wait gets a new wait, anything else a new effort
+pub fn duration_patch(t: &Task, dur: usize, rate: f64) -> TaskPatch {
+    let v = Some(Estimate::One(effort_for(t, dur, rate)));
+    if t.kind == Kind::Wait { TaskPatch { wait: v, ..Default::default() } } else { TaskPatch { effort: v, ..Default::default() } }
 }
 
 /// Half-days back to effort in person-days (written to the plan when the duration is changed in the UI)

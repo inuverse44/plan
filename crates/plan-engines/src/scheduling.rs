@@ -50,6 +50,11 @@ pub fn reduce(tasks: &[Task]) -> Vec<Vec<String>> {
     }).collect()
 }
 
+/// The business day a slot falls on (two half-day slots a day); an error past the end of the calendar
+pub fn day_of(cal: &BusinessCalendar, slot: usize) -> Result<chrono::NaiveDate, Issue> {
+    cal.days.get(slot / 2).copied().ok_or_else(|| Issue::error(format!("slot {slot} is past the end of the calendar ({} business days)", cal.days.len())))
+}
+
 fn slot_on_or_after(cal: &BusinessCalendar, d: chrono::NaiveDate) -> usize {
     cal.days.iter().position(|x| *x >= d).unwrap_or(cal.days.len()) * 2
 }

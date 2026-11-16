@@ -65,9 +65,7 @@ impl PlanningManager {
                 let l = self.load(&e.key)?;
                 let issues = analysis::inspect(&l.plan, &l.scenarios);
                 if issues.iter().any(|i| i.level == Level::Error) { return Err(issues); }
-                let sc = l.scenarios.first().ok_or_else(|| vec![Issue::error("no scenario")])?;
-                let rate = *l.plan.rates.first().unwrap_or(&1.0);
-                let est = if l.plan.estimates.contains(&EstKind::E) { EstKind::E } else { *l.plan.estimates.first().unwrap_or(&EstKind::E) };
+                let (sc, rate, est) = scenario::default_run(&l.plan, &l.scenarios).ok_or_else(|| vec![Issue::error("no scenario")])?;
                 let r = run(&l, sc, rate, est, &[]).map_err(|i| vec![i])?;
                 Ok(EpicLoad { epic: e.key.clone(), name: l.plan.title.clone(), scenario: sc.key.clone(), rate, est, load: r.load, issues: vec![] })
             };
@@ -90,15 +88,8 @@ impl PlanningManager {
         let mut ops = Vec::new();
         for c in changes {
             let Some(t) = tasks.iter().find(|t| t.id == c.id) else { continue };
-            let mut patch = TaskPatch::default();
-            if let Some(s) = c.min_start {
-                let day = l.cal.days.get(s / 2).ok_or_else(|| vec![Issue::error("start is past the calendar").at(Some(scenario_key), Some(&c.id))])?;
-                patch.not_before = Some(*day);
-            }
-            if let Some(d) = c.dur {
-                let v = Estimate::One(estimation::effort_for(t, d, rate));
-                if t.kind == Kind::Wait { patch.wait = Some(v) } else { patch.effort = Some(v) }
-            }
+            let mut patch = c.dur.map(|d| estimation::duration_patch(t, d, rate)).unwrap_or_default();
+            if let Some(s) = c.min_start { patch.not_before = Some(scheduling::day_of(&l.cal, s).map_err(|i| vec![i.at(Some(scenario_key), Some(&c.id))])?); }
             ops.push(EditOp::SetTask { key: c.id.clone(), patch, scenario: if base { None } else { Some(scenario_key.to_string()) } });
         }
         Ok(ops)
