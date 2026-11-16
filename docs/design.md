@@ -77,7 +77,7 @@ flowchart TB
 | Firestore | SQLite | Content |
 |---|---|---|
 | `epics/{key}` | `epics`, `stories`, `tasks`, `deps`, `scenarios`, `comments` | the plan; Firestore stores the `Plan` JSON as the document (arrays inside arrays are wrapped as `{"_a": [...]}`) |
-| `history/{id}` | `history` | one change: id, time, actor (`cli`, `web`, `push`, `import`), epic, op, payload (JSON) |
+| `history/{id}` | `history` | one change: id, time, actor (`cli`, `mcp`, `web`, `push`, `import`), epic, op, payload (JSON) |
 | `meta/state` | `MAX(history.id)` | version; the UI polls it and reloads when it changes |
 
 ## UI rules

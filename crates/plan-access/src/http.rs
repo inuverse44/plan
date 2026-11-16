@@ -1,5 +1,5 @@
 //! HttpPlans: read and edit plans through a server's API (plan serve, Cloud Run). Used by the CLI.
-//! The server validates and records; this only sends requests and returns the results
+//! The server validates and records (with the actor passed to each edit); this only sends requests and returns the results
 use crate::plan_access::{PlanAccess, Validate};
 use crate::token::{e, Tokens};
 use chrono::NaiveDate;
@@ -9,14 +9,13 @@ use serde_json::{json, Value};
 pub struct HttpPlans {
     base: String,
     tokens: Option<Tokens>,
-    actor: String,
 }
 
 fn enc(s: &str) -> String { s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect() }
 
 impl HttpPlans {
     /// base is the server URL (e.g. https://plan-xxxx.run.app). Without tokens no Authorization header is sent (a local server)
-    pub fn new(base: &str, tokens: Option<Tokens>, actor: &str) -> Self { HttpPlans { base: base.trim_end_matches('/').into(), tokens, actor: actor.into() } }
+    pub fn new(base: &str, tokens: Option<Tokens>) -> Self { HttpPlans { base: base.trim_end_matches('/').into(), tokens } }
 
     fn call(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, Vec<Issue>> {
         let mut req = ureq::request(method, &format!("{}{}", self.base, path));
@@ -40,17 +39,17 @@ impl PlanAccess for HttpPlans {
     fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> {
         serde_json::from_value(self.call("GET", "/api/epics", None)?).map_err(e)
     }
-    fn apply(&self, epic: &str, _actor: &str, ops: &[EditOp], _validate: Validate) -> Result<(), Vec<Issue>> {
-        self.call("POST", &format!("/api/epic/{}/ops", enc(epic)), Some(json!({ "ops": ops, "actor": self.actor }))).map(|_| ())
+    fn apply(&self, epic: &str, actor: &str, ops: &[EditOp], _validate: Validate) -> Result<(), Vec<Issue>> {
+        self.call("POST", &format!("/api/epic/{}/ops", enc(epic)), Some(json!({ "ops": ops, "actor": actor }))).map(|_| ())
     }
-    fn create_epic(&self, key: &str, name: &str, start: NaiveDate, _actor: &str) -> Result<(), Vec<Issue>> {
-        self.call("POST", "/api/epics", Some(json!({ "key": key, "name": name, "start": start, "actor": self.actor }))).map(|_| ())
+    fn create_epic(&self, key: &str, name: &str, start: NaiveDate, actor: &str) -> Result<(), Vec<Issue>> {
+        self.call("POST", "/api/epics", Some(json!({ "key": key, "name": name, "start": start, "actor": actor }))).map(|_| ())
     }
-    fn delete_epic(&self, key: &str, _actor: &str) -> Result<(), Vec<Issue>> {
-        self.call("POST", &format!("/api/epic/{}/delete", enc(key)), Some(json!({ "actor": self.actor }))).map(|_| ())
+    fn delete_epic(&self, key: &str, actor: &str) -> Result<(), Vec<Issue>> {
+        self.call("POST", &format!("/api/epic/{}/delete", enc(key)), Some(json!({ "actor": actor }))).map(|_| ())
     }
-    fn import(&self, plan: &Plan, _actor: &str) -> Result<(), Vec<Issue>> {
-        self.call("POST", "/api/import", Some(json!({ "plan": plan, "actor": self.actor }))).map(|_| ())
+    fn import(&self, plan: &Plan, actor: &str) -> Result<(), Vec<Issue>> {
+        self.call("POST", "/api/import", Some(json!({ "plan": plan, "actor": actor }))).map(|_| ())
     }
     fn history(&self, epic: Option<&str>, limit: usize) -> Result<Vec<HistoryEntry>, Vec<Issue>> {
         let q = match epic { Some(ep) => format!("?epic={}&limit={limit}", enc(ep)), None => format!("?limit={limit}") };

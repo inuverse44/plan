@@ -1,0 +1,198 @@
+//! `plan mcp`: a Model Context Protocol server on stdin/stdout for AI assistants.
+//!
+//! Messages are JSON-RPC 2.0, one per line. The tools reach the same store as the CLI
+//! (the server in ~/.config/plan/config with its token_cmd, otherwise the local SQLite) and
+//! return the same data as `--json`. Edits are recorded with the actor `mcp`.
+//!
+//!   claude mcp add plan -- /path/to/plan mcp
+use plan_contracts::{EditOp, Issue};
+use serde_json::{json, Value};
+use std::io::{BufRead, Write};
+
+const PROTOCOL: &str = "2025-06-18";
+
+const APPLY_HELP: &str = r#"Apply a list of edits to one epic at once. If any edit is invalid (a dependency loop, an unknown task, removing the deadline task…) nothing is written.
+Edits:
+  {"op":"set_story","story":{"key":"S1","name":"Investigate","purpose":"","dod":""}}
+  {"op":"add_task","task":{"id":"T1","name":"…","story":"S1","deliverable":"…","effort":[1,2,4],"after":["T0"]}}
+  {"op":"set_task","key":"T1","patch":{"effort":2,"not_before":"2026-12-01"},"scenario":null}
+  {"op":"link","task":"T2","pred":"T1"}   {"op":"unlink","task":"T2","pred":"T1"}
+  {"op":"delete_task","key":"T3"}   {"op":"delete_story","key":"S1"}
+  {"op":"clone_scenario","from":"plan1","key":"plan2","name":"Plan 2"}   {"op":"set_scenario","key":"plan2","name":"…"}   {"op":"delete_scenario","key":"plan2"}
+  {"op":"set_epic","settings":{"deadline":"2026-12-22","deadline_task":"CUT"}}
+  {"op":"add_comment","target":"T1","text":"Ticket: https://example.com/issues/42"}   {"op":"delete_comment","id":3}
+Task fields: id name short story ticket deliverable note owners after prod done not_before fixed actual_start actual_finish (dates YYYY-MM-DD), and effort (person-days) or wait (business days): a number or [optimistic, most likely, pessimistic].
+set_task: "scenario" changes only that scenario (null = the base, every scenario). "patch":{"clear":["not_before","effort","wait","owners","fixed"]} removes fields."#;
+
+fn epic_prop() -> Value { json!({ "type": "string", "description": "the epic key (from epics), or a path to a .toml plan file" }) }
+fn run_props() -> Value {
+    json!({
+        "scenario": { "type": "string", "description": "scenario key (default: the first)" },
+        "rate": { "type": "number", "description": "utilization, e.g. 0.8 (default: the first)" },
+        "est": { "type": "string", "description": "estimate kind: o, m, e or p (default: e when present)" }
+    })
+}
+fn schema(props: Value, required: &[&str]) -> Value { json!({ "type": "object", "properties": props, "required": required }) }
+fn with(mut a: Value, b: Value) -> Value { a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone()); a }
+
+pub fn tools() -> Value {
+    let ro = json!({ "readOnlyHint": true });
+    json!([
+        { "name": "epics", "description": "List the epics (key, name, start, deadline, counts of stories, tasks and scenarios) and where plans live.",
+          "inputSchema": schema(json!({}), &[]), "annotations": ro },
+        { "name": "dump", "description": "The whole plan of one epic as data: settings, stories, tasks, scenarios and comments. Read this before editing.",
+          "inputSchema": schema(json!({ "epic": epic_prop() }), &["epic"]), "annotations": ro },
+        { "name": "show", "description": "One schedule task by task (start, finish, float, what drives each start), with the date compared to the deadline, slack to the deadline and the critical path.",
+          "inputSchema": schema(with(json!({ "epic": epic_prop() }), run_props()), &["epic"]), "annotations": ro },
+        { "name": "calc", "description": "Compare every scenario × utilization × estimate: deadline date, slack, finish, total effort and risk.",
+          "inputSchema": schema(json!({ "epic": epic_prop() }), &["epic"]), "annotations": ro },
+        { "name": "why", "description": "Why one task starts when it does: its predecessors, owners' availability and float.",
+          "inputSchema": schema(with(json!({ "epic": epic_prop(), "task": { "type": "string", "description": "task id" } }), run_props()), &["epic", "task"]), "annotations": ro },
+        { "name": "check", "description": "Validate a plan: errors (loops, unknown tasks) and warnings (tasks without a deliverable…).",
+          "inputSchema": schema(json!({ "epic": epic_prop() }), &["epic"]), "annotations": ro },
+        { "name": "log", "description": "Change history, newest first: who (cli, mcp, web), when, which edit.",
+          "inputSchema": schema(json!({ "epic": { "type": "string", "description": "only this epic (default: all)" }, "limit": { "type": "integer", "description": "default 50" } }), &[]), "annotations": ro },
+        { "name": "apply", "description": APPLY_HELP,
+          "inputSchema": schema(json!({ "epic": { "type": "string", "description": "the epic key" }, "ops": { "type": "array", "items": { "type": "object" }, "description": "the edits, in order" } }), &["epic", "ops"]),
+          "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false } }
+    ])
+}
+
+/// Run one tool. Ok is the data, Err the issues (both are returned to the model)
+pub fn call(name: &str, args: &Value) -> Result<Value, Vec<Issue>> {
+    let s = |k: &str| args.get(k).and_then(Value::as_str);
+    let need = |k: &str| s(k).ok_or_else(|| vec![Issue::error(format!("{name} needs \"{k}\""))]);
+    let rate = args.get("rate").map(|v| v.as_f64().map(|x| x.to_string()).unwrap_or_else(|| v.as_str().unwrap_or_default().to_string()));
+    let run = |rate: &Option<String>| -> (Option<String>, Option<String>, Option<String>) { (s("scenario").map(str::to_string), rate.clone(), s("est").map(str::to_string)) };
+    match name {
+        "epics" => crate::epics_data(),
+        "dump" => crate::dump_data(need("epic")?),
+        "show" | "calc" | "why" => {
+            let (sc, r, e) = run(&rate);
+            let task = if name == "why" { Some(need("task")?) } else { None };
+            crate::eval_data(name, need("epic")?, (sc.as_deref(), r.as_deref(), e.as_deref()), task)
+        }
+        "check" => { let (ok, is) = crate::check_data(need("epic")?); if ok { Ok(json!({ "issues": is })) } else { Err(is) } }
+        "log" => crate::log_data(s("epic"), args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize),
+        "apply" => {
+            let ops: Vec<EditOp> = serde_json::from_value(args.get("ops").cloned().unwrap_or(Value::Null))
+                .map_err(|x| vec![Issue::error(format!("ops must be a list of edits: {x}"))])?;
+            crate::apply_data(need("epic")?, "mcp", &ops)
+        }
+        _ => Err(vec![Issue::error(format!("unknown tool: {name}"))]),
+    }
+}
+
+/// Answer one JSON-RPC message. None for notifications
+pub fn handle(msg: &Value) -> Option<Value> {
+    let id = msg.get("id")?.clone();
+    let method = msg["method"].as_str().unwrap_or_default();
+    let ok = |r: Value| Some(json!({ "jsonrpc": "2.0", "id": id, "result": r }));
+    match method {
+        "initialize" => ok(json!({
+            "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "plan", "version": env!("CARGO_PKG_VERSION") },
+            "instructions": "Plans of epics > stories > tasks with dependencies and estimates. Read with epics, dump, show, calc, why, log; edit with apply (one batch, all or nothing), then show to see how the deadline and critical path moved. The tool keeps plans only, not status."
+        })),
+        "ping" => ok(json!({})),
+        "tools/list" => ok(json!({ "tools": tools() })),
+        "tools/call" => {
+            let p = &msg["params"];
+            let args = p.get("arguments").cloned().unwrap_or(json!({}));
+            let (data, err) = match call(p["name"].as_str().unwrap_or_default(), &args) {
+                Ok(d) => (json!({ "ok": true, "data": d }), false),
+                Err(is) => (json!({ "ok": false, "issues": is }), true),
+            };
+            ok(json!({ "content": [{ "type": "text", "text": data.to_string() }], "isError": err }))
+        }
+        m => Some(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": format!("method not found: {m}") } })),
+    }
+}
+
+pub fn run() {
+    let stdin = std::io::stdin();
+    let mut out = std::io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() { continue; }
+        let reply = match serde_json::from_str::<Value>(&line) {
+            Ok(msg) => handle(&msg),
+            Err(x) => Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": format!("parse error: {x}") } })),
+        };
+        if let Some(r) = reply {
+            let _ = writeln!(out, "{r}");
+            let _ = out.flush();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sample.toml");
+
+    fn rpc(method: &str, params: Value) -> Value { handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params })).unwrap() }
+    fn tool(name: &str, args: Value) -> (bool, Value) {
+        let r = rpc("tools/call", json!({ "name": name, "arguments": args }));
+        let body: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        (r["result"]["isError"] == json!(true), body)
+    }
+
+    #[test]
+    fn handshake_and_tool_list() {
+        let r = rpc("initialize", json!({ "protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": { "name": "t", "version": "0" } }));
+        assert_eq!(r["result"]["protocolVersion"], "2025-03-26");
+        assert!(r["result"]["capabilities"]["tools"].is_object());
+        assert!(handle(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).is_none());
+        let names: Vec<String> = rpc("tools/list", json!({}))["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
+        for n in ["epics", "dump", "show", "calc", "why", "check", "log", "apply"] { assert!(names.contains(&n.to_string()), "{n}"); }
+        assert_eq!(rpc("nope", json!({}))["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn show_matches_the_cli_data() {
+        let (err, body) = tool("show", json!({ "epic": SAMPLE }));
+        assert!(!err, "{body}");
+        let expect = crate::eval_data("show", SAMPLE, (None, None, None), None).unwrap();
+        assert_eq!(body["data"], expect);
+        assert!(!body["data"]["critical_path"].as_array().unwrap().is_empty());
+        let (err, body) = tool("show", json!({ "epic": SAMPLE, "scenario": "no-such" }));
+        assert!(err && body["ok"] == json!(false), "{body}");
+    }
+
+    #[test]
+    fn apply_rejects_malformed_edits() {
+        let (err, body) = tool("apply", json!({ "epic": "X", "ops": [{ "op": "no_such_op" }] }));
+        assert!(err && body["issues"][0]["message"].as_str().unwrap().contains("ops must be"), "{body}");
+        let (err, _) = tool("apply", json!({ "ops": [] }));
+        assert!(err);
+    }
+
+    /// epics → apply → dump → log against a fresh local SQLite (PLAN_DB also turns the server off)
+    #[test]
+    fn edit_round_trip_on_sqlite() {
+        let dir = std::env::temp_dir().join(format!("plan-mcp-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PLAN_DB", dir.join("plan.db"));
+        plan_manager::PlanEditingManager::new(crate::store()).import(&plan_access::TomlFile(SAMPLE.into()), Some("demo"), "import").unwrap();
+
+        let (err, body) = tool("epics", json!({}));
+        assert!(!err && body["data"]["epics"].as_array().unwrap().iter().any(|e| e["key"] == "demo"), "{body}");
+        let first = tool("dump", json!({ "epic": "demo" })).1["data"]["tasks"][0]["id"].as_str().unwrap().to_string();
+
+        let (err, body) = tool("apply", json!({ "epic": "demo", "ops": [{ "op": "set_task", "key": first, "patch": { "note": "via mcp" } }] }));
+        assert!(!err && body["data"]["applied"] == json!(1), "{body}");
+        let (_, body) = tool("dump", json!({ "epic": "demo" }));
+        assert_eq!(body["data"]["tasks"][0]["note"], "via mcp");
+        let (_, body) = tool("log", json!({ "epic": "demo", "limit": 1 }));
+        assert_eq!(body["data"][0]["actor"], "mcp");
+
+        // a loop is refused and nothing is written
+        let (err, _) = tool("apply", json!({ "epic": "demo", "ops": [{ "op": "set_task", "key": first, "patch": { "note": "x" } }, { "op": "link", "task": first, "pred": first }] }));
+        assert!(err);
+        assert_eq!(tool("dump", json!({ "epic": "demo" })).1["data"]["tasks"][0]["note"], "via mcp");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

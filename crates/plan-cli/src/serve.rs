@@ -10,7 +10,7 @@
 //!   GET  /api/epic/KEY/history
 //!   GET  /api/history?epic=KEY&limit=N
 //!   POST /api/import         {plan}                   replace a whole plan (plan push)
-//!   Writing endpoints accept an actor (cli, web); the default is web
+//!   Writing endpoints accept an actor (cli, mcp, web, push, import); the default is web
 //!
 //! The store is Firestore with PLAN_STORE=firestore:PROJECT, otherwise the local SQLite.
 //! On Cloud Run (PORT is set) it listens on 0.0.0.0:PORT and never exits on idle (Cloud Run scales it down)
@@ -70,7 +70,7 @@ pub fn run(port: u16, open: bool) {
         if *req.method() == Method::Post { let _ = std::io::Read::read_to_string(req.as_reader(), &mut body); }
         let b: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
         let parts: Vec<&str> = url.trim_matches('/').split('/').collect();
-        let actor = b["actor"].as_str().filter(|a| ["cli", "web", "push"].contains(a)).unwrap_or("web").to_string();
+        let actor = b["actor"].as_str().filter(|a| ["cli", "web", "push", "import", "mcp"].contains(a)).unwrap_or("web").to_string();
         let query = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
         let qp = |k: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(a, _)| *a == k).map(|(_, v)| decode(v));
         match (req.method().clone(), parts.as_slice()) {

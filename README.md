@@ -41,6 +41,7 @@ plan apply KEY ops.json                      # apply a list of edits at once; an
 plan export KEY out.html                     # a single self-contained HTML page (interactive, read-only)
 plan serve [--port N] [--no-open]            # the UI and its HTTP API
 plan push [KEY]                              # copy epics from the local SQLite to the server
+plan mcp                                     # an MCP server on stdin/stdout for AI assistants
 ```
 
 Every command accepts `--json` and returns `{"ok":true,"data":…}` or `{"ok":false,"issues":[…]}`.
@@ -61,6 +62,19 @@ Every command accepts `--json` and returns `{"ok":true,"data":…}` or `{"ok":fa
   {"op": "add_comment", "target": "T1", "text": "Ticket: https://example.com/issues/42"},
   {"op": "delete_comment", "id": 3}
 ]
+```
+
+### MCP
+
+`plan mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdin/stdout. It uses the same store as the CLI (the server and `token_cmd` in `~/.config/plan/config`, otherwise the local SQLite) and returns the same data as `--json`.
+
+| Tool | Same as |
+|---|---|
+| `epics`, `dump`, `show`, `calc`, `why`, `check`, `log` | the commands of the same name (read only) |
+| `apply` | `plan apply` (all edits or none). The history records them as `mcp` |
+
+```sh
+claude mcp add plan --scope user -- /path/to/plan mcp     # Claude Code
 ```
 
 The types of every edit and every result are defined once in `crates/plan-contracts` and exported to TypeScript (`web/src/contracts.d.ts`).
@@ -155,7 +169,7 @@ The code is split by volatility following *The Method* (Righting Software, part 
 | `crates/plan-engines` | Engine | scenarios, estimation, scheduling, analysis. No I/O |
 | `crates/plan-access` | ResourceAccess | plans (SQLite, Firestore, HTTP, TOML, JSON) and the calendar |
 | `crates/plan-manager` | Manager | evaluate, what-if, edit |
-| `crates/plan-cli` | Client | the `plan` command and the HTTP server (embeds the UI and the WASM) |
+| `crates/plan-cli` | Client | the `plan` command, the HTTP server (embeds the UI and the WASM) and the MCP server |
 | `crates/plan-web` | Client | the WASM entry point used by the UI |
 | `web/` | Client | the UI in TypeScript without a framework (`src/` → `ui/` by `tsc`) |
 

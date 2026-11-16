@@ -7,6 +7,7 @@
 //!   batch   plan apply E ops.json ("-" for stdin)  apply a list of edits at once; any error writes nothing
 //!   machine every command accepts --json and returns {"ok":true,"data":…} or {"ok":false,"issues":[…]}
 //!   ui      plan serve [--port N] [--no-open] | export E [out.html]
+//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log apply) for AI assistants
 //!   k=v     name short story ticket deliverable note owner=a,b after=a,b effort=1 or 1,2,4 wait=2 prod=true not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
 //!   E may be a path to a .toml file: the file is read directly, without the DB
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local
@@ -28,6 +29,7 @@ fn say(human: impl std::fmt::Display, data: serde_json::Value) {
     if json() { println!("{}", serde_json::json!({ "ok": true, "data": data })) } else { println!("{human}") }
 }
 
+mod mcp;
 mod serve;
 mod web;
 
@@ -59,7 +61,7 @@ fn server() -> Option<(String, Option<String>)> {
     let url = std::env::var("PLAN_SERVER").ok().or_else(|| c.get("server").cloned()).filter(|s| !s.is_empty())?;
     Some((url, std::env::var("PLAN_TOKEN_CMD").ok().or_else(|| c.get("token_cmd").cloned())))
 }
-fn remote(url: &str, token_cmd: Option<String>) -> Arc<HttpPlans> { Arc::new(HttpPlans::new(url, token_cmd.map(|c| Tokens::new(TokenSource::Command(c))), "cli")) }
+fn remote(url: &str, token_cmd: Option<String>) -> Arc<HttpPlans> { Arc::new(HttpPlans::new(url, token_cmd.map(|c| Tokens::new(TokenSource::Command(c))))) }
 
 /// Where plans live: the server API if configured, otherwise the local SQLite
 pub fn store() -> Arc<dyn PlanAccess + Send + Sync> {
@@ -80,14 +82,54 @@ pub fn die(issues: &[Issue]) -> ! {
     exit(1)
 }
 
-fn pick<'a>(ev: &'a Evaluation, s: Option<&str>, r: Option<&str>, e: Option<&str>) -> &'a RunResult {
+fn pick<'a>(ev: &'a Evaluation, s: Option<&str>, r: Option<&str>, e: Option<&str>) -> Result<&'a RunResult, Vec<Issue>> {
     let s = s.map(str::to_string).unwrap_or_else(|| ev.scenarios[0].key.clone());
     let r: f64 = r.and_then(|x| x.parse().ok()).unwrap_or(ev.rates[0]);
     let e = e.and_then(EstKind::parse).unwrap_or(if ev.estimates.contains(&EstKind::E) { EstKind::E } else { ev.estimates[0] });
     let key = run_key(&s, r, e);
-    ev.runs.iter().find(|x| x.key == key).unwrap_or_else(|| {
-        eprintln!("error: no such run: {key} (scenarios {:?}, utilizations {:?}, estimates {:?})", ev.scenarios.iter().map(|s| &s.key).collect::<Vec<_>>(), ev.rates, ev.estimates.iter().map(|e| e.code()).collect::<Vec<_>>());
-        exit(1)
+    ev.runs.iter().find(|x| x.key == key).ok_or_else(|| vec![Issue::error(format!("no such run: {key} (scenarios {:?}, utilizations {:?}, estimates {:?})",
+        ev.scenarios.iter().map(|s| &s.key).collect::<Vec<_>>(), ev.rates, ev.estimates.iter().map(|e| e.code()).collect::<Vec<_>>()))])
+}
+
+/// The machine-readable results shared by `--json` and the MCP tools
+pub fn epics_data() -> Result<serde_json::Value, Vec<Issue>> {
+    Ok(serde_json::json!({ "db": place(), "epics": PlanEditingManager::new(store()).epics()? }))
+}
+pub fn dump_data(epic: &str) -> Result<serde_json::Value, Vec<Issue>> {
+    Ok(serde_json::to_value(PlanEditingManager::new(store()).plan(epic)?).unwrap())
+}
+pub fn log_data(epic: Option<&str>, limit: usize) -> Result<serde_json::Value, Vec<Issue>> {
+    let hs = PlanEditingManager::new(store()).history(epic, limit)?;
+    Ok(serde_json::json!(hs.iter().map(|h| serde_json::json!({ "id": h.id, "at": h.at, "actor": h.actor, "epic": h.epic, "op": h.op,
+        "change": serde_json::from_str::<serde_json::Value>(&h.payload).unwrap_or(serde_json::Value::Null) })).collect::<Vec<_>>()))
+}
+pub fn apply_data(epic: &str, actor: &str, ops: &[EditOp]) -> Result<serde_json::Value, Vec<Issue>> {
+    let ed = PlanEditingManager::new(store());
+    ed.apply(epic, actor, ops)?;
+    Ok(serde_json::json!({ "epic": epic, "applied": ops.len(), "version": ed.version() }))
+}
+/// check: all issues; ok is false when any is an error
+pub fn check_data(target: &str) -> (bool, Vec<Issue>) {
+    let (m, ep) = planning(target);
+    let is = m.check(&ep);
+    (!is.iter().any(|i| i.level == Level::Error), is)
+}
+/// calc, show and why as JSON. `run` picks scenario, utilization and estimate; `task` is for why
+pub fn eval_data(cmd: &str, target: &str, run: (Option<&str>, Option<&str>, Option<&str>), task: Option<&str>) -> Result<serde_json::Value, Vec<Issue>> {
+    let (m, ep) = planning(target);
+    let ev = m.evaluate(&ep)?;
+    let cal = &ev.calendar;
+    let day = |f: usize| end_day(cal, f).to_string();
+    Ok(match cmd {
+        "calc" => serde_json::json!(ev.runs.iter().map(|r| serde_json::json!({ "scenario": r.scenario, "rate": r.rate, "est": r.est, "target": day(r.target), "slack_to_deadline": r.slack_to_deadline, "finish": day(r.end), "effort": r.effort_total, "risk": r.risk })).collect::<Vec<_>>()),
+        "show" => { let r = pick(&ev, run.0, run.1, run.2)?; serde_json::json!({ "scenario": r.scenario, "rate": r.rate, "est": r.est, "target": day(r.target), "finish": day(r.end), "slack_to_deadline": r.slack_to_deadline, "critical_path": r.critical_path,
+            "tasks": r.tasks.iter().map(|t| serde_json::json!({ "id": t.id, "name": t.name, "story": t.story, "kind": t.kind, "start": cal.days[t.es / 2].to_string(), "start_pm": t.es % 2 == 1, "finish": day(t.ef.max(t.es + 1)), "float_days": t.tf.map(|x| x as f64 / 2.0), "after": t.after, "driven_by": t.why })).collect::<Vec<_>>() }) }
+        "why" => {
+            let r = pick(&ev, run.0, run.1, run.2)?;
+            let id = task.ok_or_else(|| vec![Issue::error("why needs a task")])?;
+            serde_json::to_value(r.tasks.iter().find(|t| t.id == id).ok_or_else(|| vec![Issue::error(format!("no task {id}"))])?).unwrap()
+        }
+        _ => serde_json::to_value(&ev).unwrap(),
     })
 }
 
@@ -196,9 +238,8 @@ fn plan_engines_patch(t: &mut TaskSpec, p: &TaskPatch) {
 }
 
 fn edit(epic: &str, ops: Vec<EditOp>) {
-    let ed = PlanEditingManager::new(store());
-    match ed.apply(epic, "cli", &ops) {
-        Ok(()) => say(format!("applied {} edit(s)", ops.len()), serde_json::json!({ "epic": epic, "applied": ops.len(), "version": ed.version() })),
+    match apply_data(epic, "cli", &ops) {
+        Ok(d) => say(format!("applied {} edit(s)", ops.len()), d),
         Err(e) => die(&e),
     }
 }
@@ -233,6 +274,7 @@ fn main() {
             println!("wrote {}", file.display());
         }
         "serve" => serve::run(port, open),
+        "mcp" => mcp::run(),
         "push" => {
             let (url, t) = server().unwrap_or_else(|| die(&[Issue::error("no server=URL in ~/.config/plan/config")]));
             let src = local(); let dst = remote(&url, t);
@@ -241,8 +283,8 @@ fn main() {
             say(format!("copied to {}: {}", url, keys.join(", ")), serde_json::json!({ "server": url, "epics": keys }));
         }
         "epics" => {
+            if json() { return say("", epics_data().unwrap_or_else(|e| die(&e))); }
             let ed = PlanEditingManager::new(store());
-            if json() { let l = ed.epics().unwrap_or_else(|e| die(&e)); return say("", serde_json::json!({ "db": place(), "epics": l })); }
             println!("| key | name | start | deadline | stories | tasks | scenarios |\n|---|---|---|---|---|---|---|");
             for x in ed.epics().unwrap_or_else(|e| die(&e)) {
                 println!("| {} | {} | {} | {} | {} | {} | {} |", x.key, x.name, x.start, x.deadline.map(|d| d.to_string()).unwrap_or_default(), x.stories, x.tasks, x.scenarios);
@@ -260,9 +302,9 @@ fn main() {
             say(format!("imported: {k}"), serde_json::json!({ "epic": k }));
         }
         "dump" => {
-            let ed = PlanEditingManager::new(store());
-            let p = ed.plan(&a(1)).unwrap_or_else(|e| die(&e));
-            if json() { say("", serde_json::to_value(&p).unwrap()) } else { print!("{}", plan_access::plan_access::to_toml(&p)) }
+            if json() { return say("", dump_data(&a(1)).unwrap_or_else(|e| die(&e))); }
+            let p = PlanEditingManager::new(store()).plan(&a(1)).unwrap_or_else(|e| die(&e));
+            print!("{}", plan_access::plan_access::to_toml(&p))
         }
         "apply" => {
             let src = a(2);
@@ -271,12 +313,8 @@ fn main() {
             edit(&a(1), ops)
         }
         "log" => {
-            let ed = PlanEditingManager::new(store());
-            let hs = ed.history(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e));
-            if json() {
-                let v: Vec<serde_json::Value> = hs.iter().map(|h| serde_json::json!({ "id": h.id, "at": h.at, "actor": h.actor, "epic": h.epic, "op": h.op, "change": serde_json::from_str::<serde_json::Value>(&h.payload).unwrap_or(serde_json::Value::Null) })).collect();
-                return say("", serde_json::json!(v));
-            }
+            if json() { return say("", log_data(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e))); }
+            let hs = PlanEditingManager::new(store()).history(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e));
             for h in hs { println!("{}\t{}\t{}\t{}\t{}\t{}", h.id, h.at, h.actor, h.epic, h.op, h.payload) }
         }
         "task" => {
@@ -310,32 +348,24 @@ fn main() {
         },
         "check" | "calc" | "show" | "why" | "json" | "export" => {
             let target = a(1);
-            let (m, ep) = planning(&target);
             if cmd == "check" {
-                let is = m.check(&ep);
-                let bad = is.iter().any(|i| i.level == Level::Error);
-                if json() { println!("{}", serde_json::json!({ "ok": !bad, "issues": is })); exit(if bad { 1 } else { 0 }) }
+                let (ok, is) = check_data(&target);
+                if json() { println!("{}", serde_json::json!({ "ok": ok, "issues": is })); exit(if ok { 0 } else { 1 }) }
                 for i in &is { println!("{}: {}", if i.level == Level::Error { "error" } else { "warning" }, i.line()); }
                 if is.is_empty() { println!("no errors or warnings") }
-                exit(if is.iter().any(|i| i.level == Level::Error) { 1 } else { 0 });
+                exit(if ok { 0 } else { 1 });
             }
-            let ev = m.evaluate(&ep).unwrap_or_else(|is| die(&is));
             if json() && cmd != "export" {
-                let cal = &ev.calendar;
-                let day = |f: usize| end_day(cal, f).to_string();
-                let data = match cmd.as_str() {
-                    "calc" => serde_json::json!(ev.runs.iter().map(|r| serde_json::json!({ "scenario": r.scenario, "rate": r.rate, "est": r.est, "target": day(r.target), "slack_to_deadline": r.slack_to_deadline, "finish": day(r.end), "effort": r.effort_total, "risk": r.risk })).collect::<Vec<_>>()),
-                    "show" => { let r = pick(&ev, s.as_deref(), r.as_deref(), e.as_deref()); serde_json::json!({ "scenario": r.scenario, "rate": r.rate, "est": r.est, "target": day(r.target), "finish": day(r.end), "slack_to_deadline": r.slack_to_deadline, "critical_path": r.critical_path,
-                        "tasks": r.tasks.iter().map(|t| serde_json::json!({ "id": t.id, "name": t.name, "story": t.story, "kind": t.kind, "start": cal.days[t.es / 2].to_string(), "start_pm": t.es % 2 == 1, "finish": day(t.ef.max(t.es + 1)), "float_days": t.tf.map(|x| x as f64 / 2.0), "after": t.after, "driven_by": t.why })).collect::<Vec<_>>() }) }
-                    "why" => { let r = pick(&ev, s.as_deref(), r.as_deref(), e.as_deref()); let id = a(2); serde_json::to_value(r.tasks.iter().find(|t| t.id == id).unwrap_or_else(|| die(&[Issue::error(format!("no task {id}"))]))).unwrap() }
-                    _ => serde_json::to_value(&ev).unwrap(),
-                };
-                return say("", data);
+                let task = if cmd == "why" { Some(a(2)) } else { None };
+                return say("", eval_data(&cmd, &target, (s.as_deref(), r.as_deref(), e.as_deref()), task.as_deref()).unwrap_or_else(|e| die(&e)));
             }
+            let (m, ep) = planning(&target);
+            let ev = m.evaluate(&ep).unwrap_or_else(|is| die(&is));
+            let run = || pick(&ev, s.as_deref(), r.as_deref(), e.as_deref()).unwrap_or_else(|e| die(&e));
             match cmd.as_str() {
                 "calc" => calc(&ev),
-                "show" => show(&ev, pick(&ev, s.as_deref(), r.as_deref(), e.as_deref())),
-                "why" => why(&ev, pick(&ev, s.as_deref(), r.as_deref(), e.as_deref()), &a(2)),
+                "show" => show(&ev, run()),
+                "why" => why(&ev, run(), &a(2)),
                 "json" => println!("{}", serde_json::to_string_pretty(&ev).unwrap()),
                 _ => {
                     let plan = if target.ends_with(".toml") { TomlFile(PathBuf::from(&target)).read_plan("").unwrap_or_else(|e| die(&e)) } else { store().read_plan(&ep).unwrap_or_else(|e| die(&e)) };
