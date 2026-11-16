@@ -74,7 +74,7 @@ const P = (() => {
   // Epic, story and task icons (symbols in index.html)
   const ICON = (kind: 'epic' | 'story' | 'task', x: number, y: number, s = 16) => `<use href="#i-${kind}" x="${x}" y="${y}" width="${s}" height="${s}"/>`;
   let toastTimer = 0;
-  function toast(s: string) { const t = $('toast'); t.textContent = s; t.style.opacity = '1'; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.opacity = '0', 1600) }
+  function toast(s: string) { const t = $('toast'); t.textContent = s; t.style.opacity = '1'; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.opacity = '0', Math.max(1600, s.length * 80)) }
   // Marker for tasks that need resources (an SVG, not an emoji); the tooltip names them and their off periods
   const needsTip = (needs: string[]) => 'Needs ' + needs.map(n => { const r = S.ev?.resources?.[n]; return r?.label ? `${n} (avoids ${r.label})` : n }).join(', ');
   const NEEDS = (needs: string[], x: number, y: number, s = 11) => needs.length ? `<path d="M${x} ${y - s / 2}l${s / 2} ${s / 2}l${-s / 2} ${s / 2}l${-s / 2} ${-s / 2}z" fill="none" stroke="${css('--red')}" stroke-width="1.6"><title>${esc(needsTip(needs))}</title></path>` : '';

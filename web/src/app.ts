@@ -81,7 +81,11 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     if (st.epic !== k) { Object.assign(st, { epic: k, s: '', r: '', sel: null, selStory: null, changes: {}, hist: {}, fut: {} }) }
     if (boot.mode === 'live') {
       const res = await api<{ plan: Plan; version: number }>('/api/epic/' + encodeURIComponent(k));
-      if (!res.ok) { $('errors').innerHTML = `<div class="err">${esc(issueText(res.issues))}</div>`; return }
+      if (!res.ok) {
+        // Deleted epic or a mistyped link: back to the list (replacing the bad address, so Back does not return to it)
+        if (res.issues.some(i => i.message === `no epic ${k}`)) { history.replaceState(null, '', '#/'); home(); P.toast(`Epic ${k} was not found`); return }
+        $('errors').innerHTML = `<div class="err">${esc(issueText(res.issues))}</div>`; return
+      }
       plan = res.data.plan; version = res.data.version;
     } else plan = boot.plan;
     if (!keepChanges) { st.changes = {}; st.hist = {}; st.fut = {} }
