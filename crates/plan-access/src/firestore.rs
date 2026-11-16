@@ -67,9 +67,14 @@ impl FirestorePlans {
     fn name(&self, path: &str) -> String { format!("{}/{}", self.base.trim_start_matches("https://firestore.googleapis.com/v1/"), path) }
 
     fn call(&self, method: &str, url: &str, body: Option<Value>) -> Result<Option<Value>, Vec<Issue>> {
-        let t = self.tokens.get()?;
-        let req = ureq::request(method, url).set("Authorization", &format!("Bearer {t}"));
-        let res = match body { Some(b) => req.send_json(b), None => req.call() };
+        let send = || {
+            let t = self.tokens.get()?;
+            let req = ureq::request(method, url).set("Authorization", &format!("Bearer {t}"));
+            Ok::<_, Vec<Issue>>(match &body { Some(b) => req.send_json(b.clone()), None => req.call() })
+        };
+        let mut res = send()?;
+        // A 401 means the token went stale: fetch a new one and try once more
+        if matches!(res, Err(ureq::Error::Status(401, _))) { self.tokens.forget(); res = send()?; }
         match res {
             Ok(r) => Ok(Some(r.into_json().map_err(e)?)),
             Err(ureq::Error::Status(404, _)) => Ok(None),
