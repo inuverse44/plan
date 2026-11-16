@@ -19,7 +19,7 @@ Edits:
   {"op":"link","task":"T2","pred":"T1"}   {"op":"unlink","task":"T2","pred":"T1"}
   {"op":"delete_task","key":"T3"}   {"op":"delete_story","key":"S1"}
   {"op":"clone_scenario","from":"plan1","key":"plan2","name":"Plan 2"}   {"op":"set_scenario","key":"plan2","name":"…"}   {"op":"delete_scenario","key":"plan2"}
-  {"op":"set_epic","settings":{"deadline":"2026-12-22","deadline_task":"CUT"}}
+  {"op":"set_epic","settings":{"deadline":"2026-12-22","deadline_task":"CUT","owners":["alice","bob"]}}
   {"op":"add_comment","target":"T1","text":"Ticket: https://example.com/issues/42"}   {"op":"delete_comment","id":3}
 Task fields: id name short story ticket deliverable note owners after needs done not_before fixed actual_start actual_finish (dates YYYY-MM-DD), and effort (person-days) or wait (business days): a number or [optimistic, most likely, pessimistic].
 needs: resources the task needs besides people (keys of the plan's resources, e.g. ["prod"]); the task is not placed in their off periods (see dump: resources).

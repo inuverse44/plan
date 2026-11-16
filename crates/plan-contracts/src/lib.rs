@@ -229,6 +229,9 @@ pub struct Plan {
     pub estimates: Vec<EstKind>,
     pub round: f64,
     pub default_owner: Option<String>,
+    /// Who is responsible for the epic (several allowed). Tasks keep their own owners
+    #[serde(default)]
+    pub owners: Vec<String>,
     pub calendar: CalendarSpec,
     pub colors: Colors,
     pub people: BTreeMap<String, Person>,
@@ -568,6 +571,7 @@ pub struct EpicSettings {
     pub deadline_label: Option<Option<String>>,
     pub rates: Option<Vec<f64>>,
     pub default_owner: Option<Option<String>>,
+    pub owners: Option<Vec<String>>,
 }
 
 /// One edit. With scenario = Some, it is written as that scenario's difference (the base tasks stay)
@@ -599,6 +603,8 @@ pub struct EpicSummary {
     pub name: String,
     pub start: NaiveDate,
     pub deadline: Option<NaiveDate>,
+    #[serde(default)]
+    pub owners: Vec<String>,
     pub stories: usize,
     pub tasks: usize,
     pub scenarios: usize,

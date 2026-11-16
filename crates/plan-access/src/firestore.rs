@@ -160,7 +160,7 @@ fn urlenc(s: &str) -> String { s.bytes().map(|b| if b.is_ascii_alphanumeric() ||
 fn new_plan(key: &str, name: &str, start: NaiveDate, like: Option<&Plan>) -> Plan {
     Plan {
         key: key.into(), title: name.into(), description: String::new(), start, start_pm: false, deadline: None, deadline_task: None, deadline_label: None,
-        rates: vec![1.0, 0.8, 0.6], estimates: vec![EstKind::E, EstKind::M, EstKind::P], round: 0.5, default_owner: None,
+        rates: vec![1.0, 0.8, 0.6], estimates: vec![EstKind::E, EstKind::M, EstKind::P], round: 0.5, default_owner: None, owners: vec![],
         calendar: like.map(|p| p.calendar.clone()).unwrap_or(CalendarSpec { holidays_jp: true, year_end: true, off: vec![], freeze: vec![] }),
         colors: Colors { red: 2.0, yellow: 5.0 }, people: like.map(|p| p.people.clone()).unwrap_or_default(), resources: like.map(|p| p.resources.clone()).unwrap_or_default(),
         stories: vec![], tasks: vec![], scenarios: vec![], comments: vec![], unknown_keys: vec![],
@@ -175,7 +175,7 @@ impl PlanAccess for FirestorePlans {
 
     fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> {
         let mut v: Vec<EpicSummary> = self.all_plans()?.into_iter().map(|p| EpicSummary {
-            key: p.key, name: p.title, start: p.start, deadline: p.deadline, stories: p.stories.len(), tasks: p.tasks.len(), scenarios: p.scenarios.len(),
+            key: p.key, name: p.title, start: p.start, deadline: p.deadline, owners: p.owners, stories: p.stories.len(), tasks: p.tasks.len(), scenarios: p.scenarios.len(),
         }).collect();
         v.sort_by(|a, b| a.start.cmp(&b.start));
         Ok(v)

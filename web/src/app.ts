@@ -46,8 +46,8 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     const res: ApiRes<EpicSummary[]> = LIVE ? await api<EpicSummary[]>('/api/epics') : { ok: true, data: [] };
     const list = res.ok ? res.data : [];
     const I = (k: string) => `<svg class="ico"><use href="#i-${k}"/></svg>`;
-    $('home-list').innerHTML = list.length ? `<table><thead><tr><th>Epic</th><th>Key</th><th>Start</th><th>Deadline</th><th>${I('story')}</th><th>${I('task')}</th><th>Scenarios</th></tr></thead><tbody>` +
-      list.map(x => `<tr data-k="${esc(x.key)}"><td>${I('epic')} ${esc(x.name)}</td><td class="n">${esc(x.key)}</td><td class="n">${mdw(x.start)}</td><td class="n">${x.deadline ? mdw(x.deadline) : ''}</td><td class="n">${x.stories}</td><td class="n">${x.tasks}</td><td class="n">${x.scenarios}</td></tr>`).join('') + '</tbody></table>'
+    $('home-list').innerHTML = list.length ? `<table><thead><tr><th>Epic</th><th>Key</th><th>Owners</th><th>Start</th><th>Deadline</th><th>${I('story')}</th><th>${I('task')}</th><th>Scenarios</th></tr></thead><tbody>` +
+      list.map(x => `<tr data-k="${esc(x.key)}"><td>${I('epic')} ${esc(x.name)}</td><td class="n">${esc(x.key)}</td><td>${esc((x.owners || []).join(', '))}</td><td class="n">${mdw(x.start)}</td><td class="n">${x.deadline ? mdw(x.deadline) : ''}</td><td class="n">${x.stories}</td><td class="n">${x.tasks}</td><td class="n">${x.scenarios}</td></tr>`).join('') + '</tbody></table>'
       : '<p class="empty">No epics yet</p>';
     $('home-list').querySelectorAll<HTMLElement>('tr[data-k]').forEach(tr => tr.onclick = () => location.hash = '#/e/' + encodeURIComponent(tr.dataset.k!));
     $<HTMLInputElement>('new-start').value ||= new Date().toISOString().slice(0, 10);
@@ -269,6 +269,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     const sc = plan.scenarios.find(x => x.key === st.s);
     el.innerHTML = `<button class="close" aria-label="Close">×</button><div class="sub"><svg class="ico"><use href="#i-epic"/></svg> ${esc(plan.key)}</div><div class="form">
       <label>Name<input data-e="name" value="${esc(plan.title)}"></label>
+      <label>Owners<input data-e="owners" value="${esc(plan.owners.join(', '))}" placeholder="alice, bob"></label>
       <div class="row2"><label>Start<input type="date" data-e="start" value="${plan.start}"></label><label>Deadline<input type="date" data-e="deadline" value="${plan.deadline || ''}"></label></div>
       <div class="row2"><label>Target task<select data-e="deadline_task"><option value="">Finish</option>${plan.tasks.map(t => `<option value="${esc(t.id)}" ${plan.deadline_task === t.id ? 'selected' : ''}>${esc(t.short || t.name)}</option>`).join('')}</select></label>
         <label>Default owner<input data-e="default_owner" value="${esc(plan.default_owner || '')}"></label></div>
@@ -277,6 +278,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     q(el, '.close').onclick = () => { st.settings = false; render() };
     el.querySelectorAll<HTMLInputElement>('[data-e]').forEach(i => i.onchange = () => {
       const f = i.dataset.e!, v = i.value.trim(), s: Record<string, string | null> = {};
+      if (f === 'owners') return edit([{ op: 'set_epic', settings: { owners: v.split(/[,、\s]+/).filter(Boolean) } }]);
       if (f === 'deadline' || f === 'deadline_task' || f === 'default_owner') s[f] = v || null; else s[f] = v;
       edit([{ op: 'set_epic', settings: s as EpicSettings }]);
     });

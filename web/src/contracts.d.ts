@@ -66,7 +66,11 @@ declare type Plan = {
 /**
  * Epic key
  */
-key: string, title: string, description: string, start: string, start_pm: boolean, deadline: string | null, deadline_task: string | null, deadline_label: string | null, rates: Array<number>, estimates: Array<EstKind>, round: number, default_owner: string | null, calendar: CalendarSpec, colors: Colors, people: { [key in string]: Person }, resources: { [key in string]: Resource }, stories: Array<Story>, tasks: Array<TaskSpec>, 
+key: string, title: string, description: string, start: string, start_pm: boolean, deadline: string | null, deadline_task: string | null, deadline_label: string | null, rates: Array<number>, estimates: Array<EstKind>, round: number, default_owner: string | null, 
+/**
+ * Who is responsible for the epic (several allowed). Tasks keep their own owners
+ */
+owners: Array<string>, calendar: CalendarSpec, colors: Colors, people: { [key in string]: Person }, resources: { [key in string]: Resource }, stories: Array<Story>, tasks: Array<TaskSpec>, 
 /**
  * Empty: just the base scenario
  */
@@ -148,11 +152,11 @@ declare type Level = "error" | "warning";
 
 declare type Issue = { level: Level, scenario: string | null, task: string | null, message: string, };
 
-declare type EpicSettings = { name?: string, description?: string, start?: string, start_pm?: boolean, deadline?: string | null, deadline_task?: string | null, deadline_label?: string | null, rates?: Array<number>, default_owner?: string | null, };
+declare type EpicSettings = { name?: string, description?: string, start?: string, start_pm?: boolean, deadline?: string | null, deadline_task?: string | null, deadline_label?: string | null, rates?: Array<number>, default_owner?: string | null, owners?: Array<string>, };
 
 declare type EditOp = { "op": "set_epic", settings: EpicSettings, } | { "op": "set_story", story: Story, } | { "op": "delete_story", key: string, } | { "op": "add_task", task: TaskSpec, } | { "op": "set_task", key: string, patch: TaskPatch, scenario?: string, } | { "op": "delete_task", key: string, } | { "op": "link", task: string, pred: string, } | { "op": "unlink", task: string, pred: string, } | { "op": "clone_scenario", from?: string, key: string, name: string, } | { "op": "set_scenario", key: string, name?: string, note?: string, } | { "op": "delete_scenario", key: string, } | { "op": "add_comment", target: string, text: string, } | { "op": "delete_comment", id: number, };
 
-declare type EpicSummary = { key: string, name: string, start: string, deadline: string | null, stories: number, tasks: number, scenarios: number, };
+declare type EpicSummary = { key: string, name: string, start: string, deadline: string | null, owners: Array<string>, stories: number, tasks: number, scenarios: number, };
 
 declare type HistoryEntry = { id: number, at: string, actor: string, epic: string, op: string, payload: string, };
 

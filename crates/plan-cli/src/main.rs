@@ -385,9 +385,9 @@ fn main() {
         "epics" => {
             if json() { return say("", epics_data().unwrap_or_else(|e| die(&e))); }
             let ed = PlanEditingManager::new(store());
-            println!("| key | name | start | deadline | stories | tasks | scenarios |\n|---|---|---|---|---|---|---|");
+            println!("| key | name | owners | start | deadline | stories | tasks | scenarios |\n|---|---|---|---|---|---|---|---|");
             for x in ed.epics().unwrap_or_else(|e| die(&e)) {
-                println!("| {} | {} | {} | {} | {} | {} | {} |", x.key, x.name, x.start, x.deadline.map(|d| d.to_string()).unwrap_or_default(), x.stories, x.tasks, x.scenarios);
+                println!("| {} | {} | {} | {} | {} | {} | {} | {} |", x.key, x.name, x.owners.join(", "), x.start, x.deadline.map(|d| d.to_string()).unwrap_or_default(), x.stories, x.tasks, x.scenarios);
             }
             println!("\nstore: {}", place());
         }

@@ -145,6 +145,7 @@ The Help page in the UI shows the formulas with references.
 | | `deadline`, `deadline_task`, `deadline_label` | deadline and the task compared with it |
 | | `rates`, `estimates`, `round` | utilizations, estimate kinds (o, m, e, p), rounding |
 | | `default_owner` | owner of tasks without one |
+| | `owners` | who is responsible for the epic (several allowed; shown in the epic list). Tasks keep their own owners |
 | `[calendar]` | `holidays`, `year_end`, `off` | calendar |
 | `[colors]` | `red`, `yellow` | float thresholds (days) |
 | `[people.NAME]` | `leave`, `rate` | days off, a fixed utilization for this person |
