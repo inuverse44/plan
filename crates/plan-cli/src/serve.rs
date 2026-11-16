@@ -76,7 +76,7 @@ pub fn run(port: u16, open: bool) {
         let qp = |k: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(a, _)| *a == k).map(|(_, v)| decode(v));
         match (req.method().clone(), parts.as_slice()) {
             (Method::Get, [""]) => reply(req, "text/html; charset=utf-8", web::live_page().into_bytes()),
-            (Method::Get, ["api", "version"]) => json(req, serde_json::json!({ "version": st.version() })),
+            (Method::Get, ["api", "version"]) => json(req, serde_json::json!({ "version": ed.version() })),
             (Method::Get, ["api", "epics"]) => result(req, ed.epics().map(|v| serde_json::to_value(v).unwrap())),
             (Method::Get, ["api", "loads"]) => result(req, pm.epic_loads().map(|v| serde_json::to_value(v).unwrap())),
             (Method::Post, ["api", "epics"]) => {
@@ -86,7 +86,7 @@ pub fn run(port: u16, open: bool) {
                 })();
                 result(req, r)
             }
-            (Method::Get, ["api", "epic", k]) => result(req, ed.plan(&decode(k)).map(|p| serde_json::json!({ "version": st.version(), "plan": p }))),
+            (Method::Get, ["api", "epic", k]) => result(req, ed.plan(&decode(k)).map(|p| serde_json::json!({ "version": ed.version(), "plan": p }))),
             (Method::Get, ["api", "epic", k, "history"]) => result(req, ed.history(Some(&decode(k)), 100).map(|h| serde_json::to_value(h).unwrap())),
             (Method::Post, ["api", "epic", k, "ops"]) => {
                 let r = serde_json::from_value::<Vec<EditOp>>(b["ops"].clone()).map_err(|e| vec![Issue::error(format!("invalid edits: {e}"))])

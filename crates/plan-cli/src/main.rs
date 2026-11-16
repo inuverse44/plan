@@ -14,7 +14,7 @@
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local
 //!           plan push [E]  copy epics from the local SQLite to the server (all if E is omitted)
 use chrono::{Datelike, NaiveDate};
-use plan_access::{HttpPlans, JpRuleCalendar, PlanAccess, SqlitePlans, TokenSource, Tokens, TomlFile};
+use plan_access::{HttpPlans, JpRuleCalendar, JsonPlan, PlanAccess, SqlitePlans, TokenSource, Tokens, TomlFile};
 use plan_contracts::*;
 use plan_manager::{PlanEditingManager, PlanningManager};
 use std::sync::Arc;
@@ -377,9 +377,9 @@ fn main() {
         "mcp" => mcp::run(),
         "push" => {
             let (url, t) = server().unwrap_or_else(|| die(&[Issue::error("no server=URL in ~/.config/plan/config")]));
-            let src = local(); let dst = remote(&url, t);
-            let keys: Vec<String> = match pos.get(1) { Some(k) => vec![k.clone()], None => src.list_epics().unwrap_or_else(|e| die(&e)).into_iter().map(|x| x.key).collect() };
-            for k in &keys { let p = src.read_plan(k).unwrap_or_else(|e| die(&e)); dst.import(&p, "push").unwrap_or_else(|e| die(&e)); }
+            let (src, dst) = (PlanEditingManager::new(local()), PlanEditingManager::new(remote(&url, t)));
+            let keys: Vec<String> = match pos.get(1) { Some(k) => vec![k.clone()], None => src.epics().unwrap_or_else(|e| die(&e)).into_iter().map(|x| x.key).collect() };
+            for k in &keys { let p = src.plan(k).unwrap_or_else(|e| die(&e)); dst.import(&JsonPlan(p), None, "push").unwrap_or_else(|e| die(&e)); }
             say(format!("copied to {}: {}", url, keys.join(", ")), serde_json::json!({ "server": url, "epics": keys }));
         }
         "epics" => {
@@ -469,7 +469,8 @@ fn main() {
                 "why" => why(&ev, run(), &a(2)),
                 "json" => println!("{}", serde_json::to_string_pretty(&ev).unwrap()),
                 _ => {
-                    let plan = if target.ends_with(".toml") { TomlFile(PathBuf::from(&target)).read_plan("").unwrap_or_else(|e| die(&e)) } else { store().read_plan(&ep).unwrap_or_else(|e| die(&e)) };
+                    let ed = if target.ends_with(".toml") { PlanEditingManager::new(Arc::new(TomlFile(PathBuf::from(&target)))) } else { PlanEditingManager::new(store()) };
+                    let plan = ed.plan(&ep).unwrap_or_else(|e| die(&e));
                     let out = pos.get(2).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(format!("{}.html", if plan.key.is_empty() { "plan" } else { &plan.key })));
                     std::fs::write(&out, web::export_page(&plan)).unwrap();
                     println!("wrote {}", out.display());
