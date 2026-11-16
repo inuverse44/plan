@@ -33,8 +33,9 @@ fn apply(t: &mut TaskSpec, p: &TaskPatch) {
     macro_rules! set { ($($f:ident),*) => { $( if let Some(v) = &p.$f { t.$f = v.clone(); } )* } }
     set!(story, name, short, ticket, deliverable, group, note, after, needs);
     if let Some(v) = &p.done { t.done = *v; }
-    if p.effort.is_some() { t.effort = p.effort.clone(); }
-    if p.wait.is_some() { t.wait = p.wait.clone(); }
+    // An effort replaces a wait and the other way round, as an edit of the base task does (plan_access::mutate)
+    if p.effort.is_some() { t.effort = p.effort.clone(); t.wait = None; }
+    if p.wait.is_some() { t.wait = p.wait.clone(); t.effort = None; }
     if p.owners.is_some() { t.owners = p.owners.clone(); }
     if p.not_before.is_some() { t.not_before = p.not_before; }
     if p.fixed.is_some() { t.fixed = p.fixed; }

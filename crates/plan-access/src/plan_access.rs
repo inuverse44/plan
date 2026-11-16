@@ -167,12 +167,21 @@ fn plan_patch(t: &mut TaskSpec, p: &TaskPatch) {
     }
 }
 
+/// Fold a later patch into an earlier one, as if both were applied in order: a later value drops an earlier clear
+/// of that field, and a later clear drops an earlier value
 fn merge_patch(a: &mut TaskPatch, b: &TaskPatch) {
-    macro_rules! m { ($($f:ident),*) => { $( if b.$f.is_some() { a.$f = b.$f.clone(); } )* } }
+    macro_rules! m { ($($f:ident),*) => { $( if b.$f.is_some() { a.$f = b.$f.clone(); a.clear.retain(|c| c != stringify!($f)); } )* } }
     m!(story, name, short, ticket, deliverable, group, note, effort, wait, owners, after, needs, not_before, fixed, done, actual_start, actual_finish);
+    if b.owners.is_some() { a.clear.retain(|c| c != "owner"); }
     if b.effort.is_some() { a.wait = None; }
     if b.wait.is_some() { a.effort = None; }
-    for c in &b.clear { if !a.clear.contains(c) { a.clear.push(c.clone()); } }
+    for c in &b.clear {
+        match c.as_str() {
+            "actual_start" => a.actual_start = None, "actual_finish" => a.actual_finish = None, "not_before" => a.not_before = None,
+            "fixed" => a.fixed = None, "effort" => a.effort = None, "wait" => a.wait = None, "owners" | "owner" => a.owners = None, _ => {}
+        }
+        if !a.clear.contains(c) { a.clear.push(c.clone()); }
+    }
 }
 
 // ---------- Export (TOML, readable by people and AI) ----------
