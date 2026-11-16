@@ -20,12 +20,15 @@ P.views.net = function (el: HTMLElement, ctx: ViewCtx) {
   };
   for (const k of order) E.push({ a: startN(k), b: endN[k], id: k, pts: [] });
   if (sinks.length > 1) for (const k of sinks) E.push({ a: endN[k], b: 'F', dummy: true, pts: [] });
-  // Remove dummies: if a task's end event has only one outgoing dummy, connect the task arrow to the dummy's target
+  // Remove dummies: if a task's end event has only one outgoing dummy, connect the task arrow to the dummy's target.
+  // No two arrows share both events (the usual activity-on-arrow rule): parallel tasks keep their own end event and a dummy
   for (let again = true; again;) {
     again = false;
     for (const d of E.filter(e => e.dummy)) {
       const outs = E.filter(e => e.a === d.a), ins = E.filter(e => e.b === d.a);
-      if (outs.length === 1 && ins.length === 1 && d.a !== 'S') { ins[0].b = d.b; E = E.filter(e => e !== d); again = true; break }
+      // Keep the dummy when removing it would give two arrows the same start and end events (parallel tasks would overlap)
+      const twin = ins.length === 1 && E.some(x => x !== ins[0] && x.a === ins[0].a && x.b === d.b);
+      if (outs.length === 1 && ins.length === 1 && d.a !== 'S' && !twin) { ins[0].b = d.b; E = E.filter(e => e !== d); again = true; break }
     }
   }
   const real = [...new Set(E.flatMap(e => [e.a, e.b]))];
