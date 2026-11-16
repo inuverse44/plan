@@ -1,0 +1,48 @@
+# A plan file. See README.md for every key.
+title = "(Project) schedule"
+description = "One sentence: what this plan helps you decide"
+start = "{today}"
+start_half = "am"            # am or pm
+deadline = ""                # YYYY-MM-DD, or remove the line
+# deadline_task = "CUT"      # the task compared with the deadline (default: the end of the plan)
+# deadline_label = "Cutover"
+rates = [1.0, 0.8, 0.6]      # utilization: share of each person's day spent on this plan
+estimates = ["e", "m", "p"]  # expected (PERT), most likely, pessimistic
+default_owner = "me"
+
+[calendar]
+holidays = "JP"              # skip Japanese public holidays ("none" to keep them)
+year_end = true              # skip Dec 29 - Jan 3
+off = []                     # other days to skip
+freeze = []                  # release freezes [["2026-11-15", "2026-11-29"]]; tasks with prod = true avoid them
+
+[colors]                     # float (business days) thresholds: 0 = critical, <= red = low, <= yellow = mid, above = high
+red = 2
+yellow = 5
+
+[people.me]
+leave = []                   # days off
+
+[[tasks]]
+id = "A"
+name = "(Task)"
+short = "A short name"       # label in the network diagram
+ticket = ""                  # any ticket id or URL
+deliverable = "(Deliverable)"
+effort = [1, 2, 4]           # person-days: one number, or [optimistic, most likely, pessimistic]
+after = []
+
+[[tasks]]
+id = "B"
+name = "Review (waiting)"
+deliverable = "Review comments"
+wait = 2                     # business days; uses no one's hands
+after = ["A"]
+
+# [scenarios.plan1]
+# name = "Plan 1: in order"
+# [scenarios.plan2]
+# name = "Plan 2: ..."
+# drop = ["B"]
+# [scenarios.plan2.set.A]
+# effort = [1, 1.5, 3]

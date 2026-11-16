@@ -1,0 +1,13 @@
+[package]
+name = "plan-manager"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+plan-contracts.workspace = true
+plan-engines.workspace = true
+plan-access.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

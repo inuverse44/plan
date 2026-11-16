@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run plan, building it first if needed.
+D="$(cd "$(dirname "$0")/.." && pwd)"
+[ -x "$D/target/release/plan" ] || "$D/build.sh" >&2
+exec "$D/target/release/plan" "$@"

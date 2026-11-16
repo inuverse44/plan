@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan</title>
+<script>try{const t=localStorage.getItem("plan-theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 色は意味の名前で持つ（color-semantic）。暗い画面は明るさを落とした別の値（color-dark-mode） */
+:root{
+  /* 明るい画面：ui-ux-pro-max colors.csv No.16 Productivity Tool（Teal focus + action orange） */
+  --bg:#F0FDFA; --surface:#FFFFFF; --surface-2:#E8F1F4; --fg:#134E4A; --muted:#475569; --line:#7B8798; --faint:#E8F1F4;
+  --accent:#0D9488; --on-accent:#000000; --focus:#0D9488; --action:#EA580C;
+  /* 余裕の色：styles.csv Micro-interactions の反応の色（明るい画面では濃い側） */
+  /* 余裕の色：余裕 0 は橙、ほかは青 1 色の濃淡（少ないほど濃い）。青と橙は色覚の型を問わず見分けられる（dataviz の検査に合格）。赤は締め切り・遅れ・削除だけ */
+  --f-crit:#EA580C; --f-low:#1E3A8A; --f-mid:#2563EB; --f-high:#60A5FA;
+  --crit:#134E4A; --red:#DC2626; --yellow:#D97706; --green:#16A34A; --wait:#64748B; --done:#7B8798; --freeze:rgba(220,38,38,.07);
+  --sans:"IBM Plex Sans JP","Hiragino Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --r:8px; --fast:120ms;
+}
+/* 暗い画面：colors.csv No.81 Developer Tool / IDE（Code dark）。文字は #E2E8F0（純白はにじむ。Material の dark theme）。選んだ状態は白（青は余裕の色に使う） */
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F172A; --surface:#1B2336; --surface-2:#272F42; --fg:#E2E8F0; --muted:#94A3B8; --line:#6B7A90; --faint:#1E293B;
+  --accent:#E2E8F0; --on-accent:#0F172A; --focus:#FFFFFF; --action:#F97316;
+  --f-crit:#EA580C; --f-low:#BFDBFE; --f-mid:#60A5FA; --f-high:#2563EB;
+  --crit:#E2E8F0; --red:#EF4444; --yellow:#F59E0B; --green:#22C55E; --wait:#64748B; --done:#6B7A90; --freeze:rgba(239,68,68,.10); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0F172A; --surface:#1B2336; --surface-2:#272F42; --fg:#E2E8F0; --muted:#94A3B8; --line:#6B7A90; --faint:#1E293B;
+  --accent:#E2E8F0; --on-accent:#0F172A; --focus:#FFFFFF; --action:#F97316;
+  --f-crit:#EA580C; --f-low:#BFDBFE; --f-mid:#60A5FA; --f-high:#2563EB;
+  --crit:#E2E8F0; --red:#EF4444; --yellow:#F59E0B; --green:#22C55E; --wait:#64748B; --done:#6B7A90; --freeze:rgba(239,68,68,.10); color-scheme:dark}
+@media (prefers-reduced-motion: reduce){:root{--fast:0ms}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.app{display:flex;flex-direction:column;min-height:100dvh}
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+h1{font-size:17px;font-weight:600;margin:0 8px 0 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface)}
+.seg button{border:0;background:none;padding:0 12px;min-height:32px;white-space:nowrap;transition:background var(--fast)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button:hover{background:var(--surface-2)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent);font-weight:500}
+.spacer{flex:1}
+.icon-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:var(--r);min-height:32px;padding:0 10px;transition:background var(--fast)}
+.icon-btn:hover:not(:disabled){background:var(--surface-2)}
+.icon-btn:disabled{opacity:.4;cursor:default}
+.icon-btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.icon-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.chip{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:2px 10px}
+.strip{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;padding:12px 16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:8px 14px;min-width:120px}
+.card .k{font-size:12px;color:var(--muted)}
+.card .v{font-family:var(--mono);font-size:19px;font-weight:500;white-space:nowrap}
+.card .was{color:var(--muted);font-size:13px;text-decoration:line-through;margin-right:6px}
+.late{color:var(--red)} .ok{color:var(--green)}
+.tabs{margin-left:auto;align-self:center}
+.main{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:0 16px 16px;min-height:0}
+.view{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px;min-width:0;overflow:auto}
+.side{width:300px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;align-self:start;position:sticky;top:12px}
+.side[hidden]{display:none}
+.side h2{font-size:15px;margin:0 0 2px}
+.side .sub{color:var(--muted);font-size:12px;margin-bottom:10px}
+.side dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:13px}
+.side dt{color:var(--muted)} .side dd{margin:0}
+.side .links{display:flex;flex-wrap:wrap;gap:6px}
+.side .links button{border:1px solid var(--line);background:var(--surface-2);border-radius:6px;padding:2px 8px;min-height:26px;font-size:12px}
+.side .close{float:right;border:0;background:none;min-width:28px;min-height:28px;font-size:18px;line-height:1;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
+.sw{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+svg text{fill:var(--fg);font-family:var(--sans)}
+.bar{cursor:grab;touch-action:none} .bar.dragging{cursor:grabbing}
+.rz{cursor:ew-resize}
+table{border-collapse:collapse;font-size:13px;width:100%}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+th{color:var(--muted);font-weight:500;font-size:12px;white-space:nowrap;position:sticky;top:0;background:var(--surface)}
+td.n{font-family:var(--mono);white-space:nowrap}
+tr.sel td,tr.cur td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+tbody tr{cursor:pointer}
+.err{margin:12px 16px 0;background:color-mix(in srgb,var(--red) 12%,var(--surface));border:1px solid var(--red);border-radius:var(--r);padding:10px 14px;white-space:pre-wrap}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 16px;border-radius:var(--r);font-size:13px;opacity:0;transition:opacity var(--fast);pointer-events:none}
+.form{display:grid;gap:8px;margin:4px 0 12px}
+.form label{display:grid;gap:3px;font-size:12px;color:var(--muted)}
+.form input,.form select,#add-pred,.home-form input{font:inherit;font-size:13px;color:var(--fg);background-color:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:5px 8px;min-height:30px}
+.form select,#add-pred{padding-right:30px}
+.form input:focus,.form select:focus{outline:2px solid var(--focus);outline-offset:0}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.checks{display:flex;flex-wrap:wrap;gap:12px;font-size:13px}
+.checks label{display:flex;align-items:center;gap:5px;color:var(--fg)}
+.chip-x{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.chip-x button{border:0!important;border-radius:0!important}
+.chip-x .x{color:var(--muted);padding:0 6px!important}
+.side a{color:var(--accent)}
+.form label a{font-size:12px;text-decoration:none}
+.form button.primary{min-height:32px;border-radius:var(--r);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font-weight:500}
+.notes{margin-top:14px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
+.notes-h{font-size:12px;color:var(--muted);margin-bottom:6px}
+.notes-h .count{background:var(--surface-2);border-radius:8px;padding:0 6px}
+.note{margin-bottom:8px}
+.note-meta{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)}
+.note-meta .x{margin-left:auto;border:0;background:none;color:var(--muted);min-width:24px;min-height:24px}
+.note-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.note-in{width:100%;box-sizing:border-box;font:inherit;font-size:13px;color:var(--fg);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:5px 8px;resize:vertical}
+.note-in:focus{outline:2px solid var(--focus);outline-offset:0}
+.danger{margin-top:14px;width:100%;border:1px solid var(--red);color:var(--red);background:none;border-radius:var(--r);min-height:32px}
+.seg.small button{min-height:26px;font-size:12px;padding:0 10px}
+.home{max-width:960px;margin:0 auto;padding:24px 16px;display:grid;gap:16px}
+.home h1{font-size:20px}
+.home-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px}
+.home-form input{min-width:120px}
+.empty{color:var(--muted)}
+#home-list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:4px 8px}
+.story-row{cursor:pointer}
+.bar2{display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:12px 16px 0}
+.field select,.form select,#add-pred{appearance:none;-webkit-appearance:none;padding-right:30px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237B8798' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:12px}
+.field{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.field select{font:inherit;font-size:13px;color:var(--fg);background-color:var(--surface);border:1px solid var(--line);border-radius:var(--r);min-height:32px;padding:0 30px 0 10px;max-width:260px}
+.ico{width:16px;height:16px;flex:none;vertical-align:-3px}
+.icon-only{padding:0 8px}
+.help{max-width:760px;margin:0 auto;padding:24px 16px 48px;line-height:1.7}
+.help h2{font-size:15px;margin:22px 0 6px}
+.help kbd{font-family:var(--mono);font-size:12px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--surface)}
+.help .katex-display{margin:10px 0;overflow-x:auto;overflow-y:hidden}
+.help .refs{padding-left:22px;font-size:13px;color:var(--muted)}
+.help .refs a,.help a{color:var(--accent)}
+.help code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);padding:1px 5px;border-radius:4px}
+.side{overflow:hidden}
+.form input,.form select{width:100%;min-width:0}
+.row2>*{min-width:0}
+@media (max-width:900px){.main{grid-template-columns:1fr}.side{width:auto;position:static}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-epic" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" fill="#8B5CF6"/><path d="M13 5 7 13h4l-1 6 6-8h-4l1-6z" fill="#fff"/></symbol>
+  <symbol id="i-story" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" fill="#22C55E"/><path d="M8 6h8v12l-4-3-4 3z" fill="#fff"/></symbol>
+  <symbol id="i-task" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5" fill="#3B82F6"/><path d="m7.5 12.5 3 3 6-7" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+<div class="home" id="app-home" hidden>
+  <div style="display:flex;align-items:center;gap:8px"><h1 style="margin-right:auto"><svg class="ico"><use href="#i-epic"/></svg> Epics</h1><button class="icon-btn icon-only theme" title="Light / dark" aria-label="Toggle light or dark"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button><a class="icon-btn icon-only" href="#/help" title="Help" aria-label="Help" style="text-decoration:none">?</a></div>
+  <form class="home-form" id="new-epic" aria-label="New epic">
+    <input id="new-key" placeholder="key" required pattern="[^\s/]+" aria-label="Key" size="12">
+    <input id="new-name" placeholder="Name" required aria-label="Name" style="flex:1">
+    <input id="new-start" type="date" required aria-label="Start">
+    <button class="icon-btn primary" type="submit">New epic</button>
+  </form>
+  <div id="home-list"></div>
+</div>
+<div class="help" id="app-help" hidden></div>
+<div class="app" id="app-epic" hidden>
+  <div class="top" id="top">
+    <button class="icon-btn icon-only" id="back" title="Epics" aria-label="Back to epics"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+    <h1><svg class="ico"><use href="#i-epic"/></svg> <span id="title">Plan</span></h1>
+    <button class="icon-btn icon-only" id="settings" title="Epic settings" aria-label="Epic settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></button>
+    <span class="spacer"></span>
+    <span class="chip" id="warn" hidden></span>
+    <button class="icon-btn icon-only" id="undo" title="Undo (⌘Z)" aria-label="Undo" disabled><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
+    <button class="icon-btn icon-only" id="redo" title="Redo (⇧⌘Z)" aria-label="Redo" disabled><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
+    <button class="icon-btn" id="reset" title="Discard moves" disabled>Reset</button>
+    <button class="icon-btn primary" id="save" title="Save moves (⌘S)" disabled>Save</button>
+    <button class="icon-btn icon-only theme" title="Light / dark" aria-label="Toggle light or dark"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <a class="icon-btn icon-only" href="#/help" title="Help" aria-label="Help" style="text-decoration:none">?</a>
+  </div>
+  <div id="errors"></div>
+  <div class="bar2" id="controls"></div>
+  <div class="strip"><div id="cards" style="display:contents"></div>
+    <div class="tabs" style="display:flex;gap:8px;align-items:center">
+      <button class="icon-btn" id="add-story" title="Add story"><svg class="ico"><use href="#i-story"/></svg> Story</button>
+      <button class="icon-btn" id="add-task" title="Add task (N)"><svg class="ico"><use href="#i-task"/></svg> Task</button>
+      <div class="seg" id="tabs" role="tablist"></div></div></div>
+  <div class="main">
+    <section class="view" id="view" tabindex="-1"></section>
+    <aside class="side" id="side" hidden></aside>
+  </div>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<!--SCRIPTS-->
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "plan-web-ui",
+  "private": true,
+  "scripts": { "build": "tsc -p .", "check": "tsc -p . --noEmit" },
+  "devDependencies": { "typescript": "5.9.3" }
+}

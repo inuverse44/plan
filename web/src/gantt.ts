@@ -1,0 +1,218 @@
+// 2 つのガント（ストーリー・作業）で共通：日付の目盛り・週末・禁止期間・今日・締め切り
+function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
+  const { css, D, iso, mdw, S } = P;
+  const { run, base } = ctx, cal = S.cal;
+  const acts = run.tasks.map(t => t.actual_start).filter((x): x is string => !!x).sort();
+  const t0 = D(acts.length && acts[0] < cal.days[cal.start_slot >> 1] ? acts[0] : cal.days[cal.start_slot >> 1]);
+  let last = S.end(Math.max(run.end, base.end)); if (S.ev.deadline && S.ev.deadline > last) last = S.ev.deadline;
+  const nd = Math.round((D(last).getTime() - t0.getTime()) / 864e5) + 6;
+  const lw = 220, rh = 32, top = 30;
+  const avail = Math.max(640, el.clientWidth - 26);
+  const dw = Math.max(14, Math.min(36, (avail - lw) / nd));
+  const W = lw + nd * dw + 30, H = top + nrows * rh + 8;
+  const xd = (s: string) => lw + Math.round((D(s).getTime() - t0.getTime()) / 864e5) * dw;
+  const xs = (s: number) => xd(S.start(s)) + (s % 2 ? dw / 2 : 0);
+  const xe = (f: number) => xd(S.end(f)) + ((f - 1) % 2 ? dw : dw / 2);
+  const off = new Set(cal.off);
+  let head = `<svg id="gsvg" xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gantt">
+  <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="${css('--wait')}" opacity=".25"/><line x1="0" y1="0" x2="0" y2="6" stroke="${css('--wait')}" stroke-width="3"/></pattern>
+  <marker id="ga" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--muted')}"/></marker>
+  <marker id="gh" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--accent')}"/></marker></defs>`;
+  for (const [a, b] of S.ev.freeze) { const x1 = Math.max(lw, xd(a)), x2 = Math.min(W, xd(b) + dw); if (x2 > x1) head += `<rect x="${x1}" y="${top - 4}" width="${x2 - x1}" height="${H - top}" fill="${css('--freeze')}"/>` }
+  for (let i = 0; i < nd; i++) {
+    const d = new Date(t0.getTime() + i * 864e5), w = d.getDay(), x = lw + i * dw;
+    if (w === 0 || w === 6 || off.has(iso(d))) head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top}" fill="${css('--faint')}"/>`;
+    if (w === 1) head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--line')}"/><text x="${x + 3}" y="${top - 12}" font-size="11" style="fill:${css('--muted')}">${P.md(iso(d))}</text>`;
+  }
+  const today = iso(new Date());
+  if (today >= cal.days[0] && today <= last) { const x = xd(today); head += `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5"/>` }
+  if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"><title>Deadline ${mdw(S.ev.deadline)}</title></line>` }
+  // 作業の棒の左右（済で実績があれば実績の日付、そうでなければ計算した半日）
+  const bx = (t: TaskView): [number, number] => t.kind === 'done' && t.actual_start ? [xd(t.actual_start), xd(t.actual_finish || t.actual_start) + dw] : [xs(t.es), xe(t.ef > t.es ? t.ef : t.es + 1)];
+  return { t0, nd, lw, rh, top, dw, W, H, xd, xs, xe, bx, last, head };
+}
+
+// ストーリー・作業の切り替え（ガントの左上）
+const ganttLevel = (ctx: ViewCtx) => `<div class="seg small" style="margin-bottom:8px" role="group" aria-label="Gantt level">${[['story', 'Stories'], ['task', 'Tasks']].map(([v, l]) => `<button data-level="${v}" aria-pressed="${ctx.level === v}">${l}</button>`).join('')}</div>`;
+const wireLevel = (el: HTMLElement, ctx: ViewCtx) => el.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.onclick = () => ctx.setLevel(b.dataset.level as 'story' | 'task'));
+
+// ストーリー粒度：1 行 1 ストーリー。期間は作業の最早開始〜最遅終了、色は中で一番余裕の少ない作業
+P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
+  const { css, esc, mdw, S } = P;
+  const { run, base } = ctx;
+  const stories = ctx.plan?.stories || [];
+  const known = new Set(stories.map(x => x.key));
+  const groupOf = (t: TaskView) => known.has(t.story) ? t.story : '';
+  const groups: { key: string; name: string }[] = stories.map(x => ({ key: x.key, name: x.name }));
+  if (run.tasks.some(t => !known.has(t.story))) groups.push({ key: '', name: 'No story' });
+  const span = (r: RunResult, g: { key: string; name: string }) => {
+    const all = r.tasks.filter(t => groupOf(t) === g.key && (t.kind !== 'done' || t.actual_start));
+    const mem = all.filter(t => t.kind !== 'done');
+    if (!all.length) return null;
+    const xs2 = all.map(t => bx(t));
+    const rank: Partial<Record<FloatColor, number>> = { crit: 0, red: 1, yellow: 2, green: 3, wait: 4 };
+    const worst = mem.map(t => t.color).sort((a, b) => (rank[a] ?? 9) - (rank[b] ?? 9))[0];
+    const fl = mem.filter(t => t.tf != null && t.kind !== 'wait').map(t => t.tf as number);
+    return { x1: Math.min(...xs2.map(v => v[0])), x2: Math.max(...xs2.map(v => v[1])), n: all.length, done: all.length - mem.length, color: (worst || 'done') as FloatColor, minf: fl.length ? Math.min(...fl) / 2 : null };
+  };
+  const { lw, rh, top, W, xs, xe, bx, head } = ganttFrame(el, ctx, groups.length);
+  let s = head;
+  const ry = (i: number) => top + i * rh;
+  // ストーリーどうしの依存：別のストーリーの作業から作業へ依存があれば、1 本にまとめて引く
+  const K = P.index(run), seen = new Set();
+  let deps = '';
+  for (const t of run.tasks) for (const p of t.reduced_after) {
+    const a = groupOf(K[p]), b = groupOf(t), k = a + '>' + b;
+    if (a === b || seen.has(k)) continue; seen.add(k);
+    const ia = groups.findIndex(g => g.key === a), ib = groups.findIndex(g => g.key === b);
+    const sa = span(run, groups[ia]), sb = span(run, groups[ib]); if (!sa || !sb) continue;
+    const x1 = sa.x2, y1 = ry(ia) + rh / 2, x2 = sb.x1, y2 = ry(ib) + rh / 2;
+    const d = x2 - 12 >= x1 ? `M${x1} ${y1}H${x1 + 6}V${y2}H${x2 - 1}` : `M${x1} ${y1}h6V${y2 + (y2 > y1 ? -rh / 2 : rh / 2)}H${x2 - 8}V${y2}H${x2 - 1}`;
+    deps += `<path d="${d}" fill="none" stroke="${css('--muted')}" stroke-width="1.2" opacity=".55" marker-end="url(#ga)"/>`;
+  }
+  let bars = '';
+  groups.forEach((g, i) => {
+    const y = ry(i), sp = span(run, g), b0 = span(base, g), sel = ctx.selStory === g.key && g.key;
+    if (sel) bars += `<rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
+    bars += `<g class="story-row" data-story="${esc(g.key)}">` + (g.key ? P.ICON('story', 6, y + 8) : '') +
+      `<text x="${g.key ? 28 : 8}" y="${y + 21}" font-size="13" font-weight="600" style="${g.key ? '' : `fill:${css('--muted')}`}">${esc(g.name.slice(0, 15))}<title>${esc(g.name)}</title></text>`;
+    if (sp) {
+      const x1 = sp.x1, w = Math.max(6, sp.x2 - x1), crit = sp.color === 'crit';
+      if (b0 && (b0.x1 !== sp.x1 || b0.x2 !== sp.x2)) bars += `<rect x="${b0.x1}" y="${y + 7}" width="${Math.max(3, b0.x2 - b0.x1)}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
+      const tip = `${g.name}\n${sp.n} tasks (${sp.done} done) · min float ${sp.minf ?? '—'}d`;
+      bars += `<rect x="${x1}" y="${y + 6}" width="${w}" height="${rh - 12}" rx="4" fill="${sp.color === 'wait' ? 'url(#hatch)' : css(P.COLOR[sp.color])}" style="cursor:pointer"><title>${esc(tip)}</title></rect>`;
+      if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
+      bars += `<text x="${x1 + w + 8}" y="${y + 21}" font-size="11.5" style="fill:${css('--muted')}">${sp.n}</text>`;
+    }
+    bars += `</g>`;
+  });
+  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}</svg></div>` + P.LEGEND();
+  wireLevel(el, ctx);
+  el.querySelectorAll<SVGGElement>('.story-row').forEach(g => g.addEventListener('click', () => g.dataset.story ? ctx.selectStory(g.dataset.story) : null));
+};
+
+// ガント：棒を引くと開始、右端を引くと日数が変わる。依存の線は先行の終わり → 後の始まり
+P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
+  if (ctx.level === 'story') return P.views.ganttStories(el, ctx);
+  const { css, esc, D, iso, mdw, S } = P;
+  const { run, base } = ctx, cal = S.cal;
+  const B = P.index(base);
+  // 行：ストーリーの順（計画の stories の順）に見出し、その下に作業を動かす前の開始の順で。ストーリー無しは最後
+  const stories = (ctx.plan?.stories || []);
+  const sIdx: Record<string, number> = Object.fromEntries(stories.map((x, i) => [x.key, i]));
+  // 済で実績のある作業は実績の開始の順で先に、ほかは計算した開始の順
+  const when = (t: TaskView) => t.kind === 'done' && t.actual_start ? (D(t.actual_start).getTime() - D('2000-01-01').getTime()) / 864e5 - 1e6 : t.es;
+  const ids = base.tasks.map(t => t.id).sort((a, b) => ((sIdx[B[a].story] ?? 1e9) - (sIdx[B[b].story] ?? 1e9)) || (when(B[a]) - when(B[b])));
+  // 行は作業の id か、ストーリーの見出し
+  const rows: (string | { story: string })[] = [];
+  let curS: string | undefined = undefined;
+  for (const id of ids) {
+    const sk = sIdx[B[id].story] != null ? B[id].story : '';
+    if (sk !== curS && sk) rows.push({ story: sk });
+    curS = sk; rows.push(id);
+  }
+  for (const x of stories) if (!ids.some(id => B[id].story === x.key)) rows.push({ story: x.key });
+  const K = P.index(run);
+  const { t0, nd, lw, rh, top, dw, W, H, xd, xs, xe, bx, last, head } = ganttFrame(el, ctx, rows.length);
+  let s = head;
+  const ry = (id: string) => top + rows.indexOf(id) * rh;
+  const taskRows = rows.filter((r): r is string => typeof r === 'string');
+  const rel = ctx.focus ? P.related(run, ctx.focus) : null;
+  // 選んだ行の帯
+  if (ctx.sel && rows.includes(ctx.sel)) s += `<rect x="0" y="${ry(ctx.sel)}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
+
+  let deps = '';
+  for (const k of taskRows) for (const p of K[k].reduced_after) {
+    const x1 = bx(K[p])[1], y1 = ry(p) + rh / 2, x2 = bx(K[k])[0], y2 = ry(k) + rh / 2;
+    const on = rel && rel.has(p) && rel.has(k), tight = K[p].ef === K[k].es;
+    const d = x2 - 12 >= x1 ? `M${x1} ${y1}H${x1 + 6}V${y2}H${x2 - 1}` : `M${x1} ${y1}h6V${y2 + (y2 > y1 ? -rh / 2 : rh / 2)}H${x2 - 8}V${y2}H${x2 - 1}`;
+    deps += `<path d="${d}" fill="none" stroke="${css(on ? '--accent' : '--muted')}" stroke-width="${on ? 2 : 1.2}" opacity="${rel ? (on ? 1 : .12) : (tight ? .75 : .35)}" marker-end="url(#${on ? 'gh' : 'ga'})"/>`;
+  }
+  let bars = '';
+  rows.forEach((r, i) => {
+    if (typeof r === 'string') return;
+    const y = top + i * rh, sk = r.story, sname = stories.find(x => x.key === sk)?.name || sk;
+    const mem = run.tasks.filter(t => (sk ? t.story === sk : !(t.story in sIdx)) && (t.kind !== 'done' || t.actual_start));
+    const sel = ctx.selStory && ctx.selStory === sk;
+    bars += `<g class="story-row" data-story="${esc(sk)}"><rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--surface-2')}" opacity="${sel ? .9 : .45}"/>`;
+    bars += P.ICON('story', 6, y + 8) + `<text x="28" y="${y + 21}" font-size="13" font-weight="600">${esc(sname.slice(0, 15))}<title>${esc(sname)}</title></text>`;
+    if (mem.length) {
+      const x1 = Math.min(...mem.map(t => bx(t)[0])), x2 = Math.max(...mem.map(t => bx(t)[1]));
+      bars += `<path d="M${x1} ${y + 22}V${y + 12}H${x2}V${y + 22}" fill="none" stroke="${css('--muted')}" stroke-width="2"/>`;
+    }
+    bars += `</g>`;
+  });
+  for (const k of taskRows) {
+    const t = K[k], b = B[k], y = ry(k), dim = rel && !rel.has(k);
+    const crit = t.tf === 0 && t.kind !== 'done';
+    const tip = `${t.name}\n${mdw(S.start(t.es))} ${S.half(t.es)} – ${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : ''}\nFloat ${t.tf == null ? '—' : t.tf / 2}d · ${t.why}`;
+    bars += `<g data-id="${k}" opacity="${dim ? .25 : 1}">`;
+    const ind = t.story && sIdx[t.story] != null ? 14 : 0;
+    bars += P.ICON('task', 6 + ind, y + 9, 14) + `<text x="${26 + ind}" y="${y + 21}" font-size="13" font-weight="${crit ? 600 : 400}" style="cursor:pointer">${esc((t.short || t.name).slice(0, 14))}<title>${esc(tip)}</title></text>`;
+    if (t.prod) bars += P.PROD(lw - 12, y + 16);
+    if (b.es !== t.es || b.ef !== t.ef) bars += `<rect x="${xs(b.es)}" y="${y + 7}" width="${Math.max(3, xe(b.ef) - xs(b.es))}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
+    if (t.kind === 'milestone') {
+      const cx = xs(t.es); bars += `<path class="bar" data-id="${k}" d="M${cx} ${y + 6}l10 10l-10 10l-10-10z" fill="${css(crit ? '--f-crit' : '--muted')}"><title>${esc(tip)}</title></path>`;
+    } else {
+      const [bx1, bx2] = bx(t), x1 = bx1, w = Math.max(6, bx2 - bx1), wait = t.kind === 'wait';
+      const fill = wait ? 'url(#hatch)' : css(P.COLOR[t.color]);
+      bars += `<rect class="${t.kind === 'done' ? '' : 'bar'}" data-id="${k}" x="${x1}" y="${y + 6}" width="${w}" height="${rh - 12}" rx="4" fill="${fill}"
+        stroke="${crit ? css('--f-crit') : (ctx.sel === k ? css('--focus') : 'none')}" stroke-width="${crit ? 2 : 2}" ${crit && !wait ? `stroke-opacity=".0"` : ''}><title>${esc(tip)}</title></rect>`;
+      if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
+      if (t.kind !== 'done') bars += `<rect class="rz" data-id="${k}" x="${x1 + w - 6}" y="${y + 6}" width="12" height="${rh - 12}" fill="transparent"/>`;
+      // 依存をつなぐつまみ：ここから別の作業へ引く
+      if (ctx.editable && (ctx.focus === k || ctx.sel === k)) bars += `<circle class="link" data-id="${k}" cx="${x1 + w + 12}" cy="${y + rh / 2}" r="6" fill="${css('--surface')}" stroke="${css('--accent')}" stroke-width="2" style="cursor:crosshair"><title>Drag onto the task that should follow</title></circle>`;
+    }
+    bars += `</g>`;
+  }
+  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}</svg></div>` + P.LEGEND();
+  wireLevel(el, ctx);
+
+  const svg = el.querySelector<SVGSVGElement>('#gsvg')!;
+  svg.querySelectorAll<SVGGElement>('g[data-id]').forEach(g => {
+    g.addEventListener('mouseenter', () => ctx.hover(g.dataset.id!));
+    g.addEventListener('click', () => { if (!ctx.dragged) ctx.select(g.dataset.id!) });
+  });
+  svg.addEventListener('mouseleave', () => ctx.hover(null));
+  svg.querySelectorAll<SVGGElement>('.story-row').forEach(g => g.addEventListener('click', () => ctx.selectStory(g.dataset.story!)));
+  svg.querySelectorAll<SVGCircleElement>('.link').forEach(c => c.addEventListener('pointerdown', ev => {
+    ev.preventDefault(); ev.stopPropagation();
+    const from = c.dataset.id!, box = svg.getBoundingClientRect();
+    const x0 = c.cx.baseVal.value, y0 = c.cy.baseVal.value;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    line.setAttribute('fill', 'none'); line.setAttribute('stroke', css('--accent')); line.setAttribute('stroke-width', '2'); line.setAttribute('stroke-dasharray', '5 4');
+    svg.appendChild(line);
+    ctx.dragged = true;
+    const mv = (e: PointerEvent) => line.setAttribute('d', `M${x0} ${y0}L${e.clientX - box.left} ${e.clientY - box.top}`);
+    const up = (e: PointerEvent) => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up); line.remove();
+      const g = document.elementFromPoint(e.clientX, e.clientY)?.closest<SVGGElement>('g[data-id]');
+      setTimeout(() => ctx.dragged = false);
+      if (g && g.dataset.id !== from) ctx.link(from, g.dataset.id!);
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  }));
+  // 引いて動かす。4px 動くまでは選ぶだけ（drag-threshold）
+  const slotAt = (px: number) => {
+    const f = (px - lw) / dw, i = Math.floor(f), dd = iso(new Date(t0.getTime() + i * 864e5));
+    const j = cal.days.indexOf(dd);
+    if (j < 0) { const n = cal.days.findIndex(z => z > dd); return Math.max(0, n) * 2 }
+    return j * 2 + (f - i >= .5 ? 1 : 0);
+  };
+  svg.querySelectorAll<SVGElement>('.bar, .rz').forEach(node => node.addEventListener('pointerdown', ev => {
+    const id = node.dataset.id!, rz = node.classList.contains('rz'), t = K[id];
+    const left = () => svg.getBoundingClientRect().left;
+    const x0 = ev.clientX, grab = slotAt(ev.clientX - left()) - t.es;
+    let moving = false; ctx.dragged = false;
+    const mv = (e: PointerEvent) => {
+      if (!moving && Math.abs(e.clientX - x0) < 4) return;
+      moving = true; ctx.dragged = true; node.classList.add('dragging');
+      const sl = slotAt(e.clientX - left());
+      if (rz) ctx.change(id, { dur: Math.max(1, sl - ctx.current(id)!.es + 1) }, false);
+      else ctx.change(id, { min_start: Math.max(cal.start_slot, sl - grab) }, false);
+    };
+    const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); if (moving) ctx.commit(); else ctx.select(id); setTimeout(() => ctx.dragged = false) };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+    ev.preventDefault();
+  }));
+};

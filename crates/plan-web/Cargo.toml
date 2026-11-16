@@ -1,0 +1,14 @@
+[package]
+name = "plan-web"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+plan-contracts.workspace = true
+plan-manager.workspace = true
+plan-access.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "=0.2.100"

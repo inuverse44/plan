@@ -1,0 +1,13 @@
+[package]
+name = "plan-contracts"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+chrono.workspace = true
+ts-rs = { version = "12", optional = true, features = ["chrono-impl", "no-serde-warnings"] }
+
+[features]
+# 画面（TypeScript）の型を Rust の型から作る：cargo test -p plan-contracts --features ts
+ts = ["dep:ts-rs"]

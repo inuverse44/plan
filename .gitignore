@@ -1,0 +1,7 @@
+examples/*.html
+__pycache__/
+target/
+web/pkg/
+data/
+web/ui/
+web/node_modules/

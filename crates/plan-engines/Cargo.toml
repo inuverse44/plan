@@ -1,0 +1,8 @@
+[package]
+name = "plan-engines"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+plan-contracts.workspace = true
+chrono.workspace = true
