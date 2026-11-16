@@ -104,9 +104,57 @@ pub fn log_data(epic: Option<&str>, limit: usize) -> Result<serde_json::Value, V
         "change": serde_json::from_str::<serde_json::Value>(&h.payload).unwrap_or(serde_json::Value::Null) })).collect::<Vec<_>>()))
 }
 pub fn apply_data(epic: &str, actor: &str, ops: &[EditOp]) -> Result<serde_json::Value, Vec<Issue>> {
+    let pm = PlanningManager::new(store(), Arc::new(JpRuleCalendar));
+    let before = pm.evaluate(epic).ok();
     let ed = PlanEditingManager::new(store());
     ed.apply(epic, actor, ops)?;
-    Ok(serde_json::json!({ "epic": epic, "applied": ops.len(), "version": ed.version() }))
+    let after = pm.evaluate(epic);
+    Ok(serde_json::json!({ "epic": epic, "applied": ops.len(), "version": ed.version(), "impact": impact(before.as_ref(), after) }))
+}
+
+/// One run's headline: the date compared to the deadline, the end, slack and the critical path
+fn headline(ev: &Evaluation, r: &RunResult) -> serde_json::Value {
+    let day = |f: usize| end_day(&ev.calendar, f).to_string();
+    serde_json::json!({ "target": day(r.target), "finish": day(r.end), "slack_to_deadline": r.slack_to_deadline, "critical_path": r.critical_path })
+}
+
+/// How the edits moved the schedule: the default run (first scenario, first utilization, e) before and after,
+/// and every other run whose date, end or slack moved. `before` is null when the plan could not be evaluated before
+fn impact(before: Option<&Evaluation>, after: Result<Evaluation, Vec<Issue>>) -> serde_json::Value {
+    let after = match after { Ok(a) => a, Err(is) => return serde_json::json!({ "error": is }) };
+    let Ok(ra) = pick(&after, None, None, None) else { return serde_json::Value::Null };
+    let rb = before.and_then(|b| b.runs.iter().find(|r| r.key == ra.key).map(|r| (b, r)));
+    let a = headline(&after, ra);
+    let b = rb.map(|(ev, r)| headline(ev, r));
+    let moved: Vec<serde_json::Value> = after.runs.iter().filter(|r| r.key != ra.key).filter_map(|r| {
+        let (bev, br) = before.and_then(|b| b.runs.iter().find(|x| x.key == r.key).map(|x| (b, x)))?;
+        let (hb, ha) = (headline(bev, br), headline(&after, r));
+        let same = ["target", "finish", "slack_to_deadline"].iter().all(|k| hb[k] == ha[k]);
+        (!same).then(|| serde_json::json!({ "scenario": r.scenario, "rate": r.rate, "est": r.est,
+            "target": [hb["target"], ha["target"]], "finish": [hb["finish"], ha["finish"]], "slack_to_deadline": [hb["slack_to_deadline"], ha["slack_to_deadline"]] }))
+    }).collect();
+    let changed = b.as_ref().map(|b| b != &a).unwrap_or(true);
+    serde_json::json!({ "run": { "scenario": ra.scenario, "rate": ra.rate, "est": ra.est }, "changed": changed, "before": b, "after": a, "other_runs_moved": moved })
+}
+
+/// The impact as one or two lines for people
+fn impact_text(i: &serde_json::Value) -> String {
+    if let Some(e) = i.get("error") { return format!("schedule not evaluated: {e}"); }
+    let (Some(a), Some(run)) = (i.get("after"), i.get("run")) else { return String::new() };
+    let head = format!("{} · {} · {}", run["scenario"].as_str().unwrap_or(""), run["rate"], run["est"].as_str().unwrap_or(""));
+    let s = |v: &serde_json::Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+    let mut out = match i.get("before").filter(|b| !b.is_null()) {
+        Some(_) if i["changed"] == serde_json::json!(false) => format!("{head}: no change (target {}, slack {})", s(&a["target"]), s(&a["slack_to_deadline"])),
+        Some(b) => {
+            let mut t = format!("{head}: target {} → {}, finish {} → {}, slack {} → {}", s(&b["target"]), s(&a["target"]), s(&b["finish"]), s(&a["finish"]), s(&b["slack_to_deadline"]), s(&a["slack_to_deadline"]));
+            if b["critical_path"] != a["critical_path"] { t += &format!("\n  critical path: {}", a["critical_path"].as_array().map(|x| x.iter().map(s).collect::<Vec<_>>().join(" → ")).unwrap_or_default()); }
+            t
+        }
+        None => format!("{head}: target {}, finish {}, slack {}", s(&a["target"]), s(&a["finish"]), s(&a["slack_to_deadline"])),
+    };
+    let n = i["other_runs_moved"].as_array().map(|x| x.len()).unwrap_or(0);
+    if n > 0 { out += &format!("\n  {n} other run(s) moved (plan calc)"); }
+    out
 }
 /// check: all issues; ok is false when any is an error
 pub fn check_data(target: &str) -> (bool, Vec<Issue>) {
@@ -239,7 +287,7 @@ fn plan_engines_patch(t: &mut TaskSpec, p: &TaskPatch) {
 
 fn edit(epic: &str, ops: Vec<EditOp>) {
     match apply_data(epic, "cli", &ops) {
-        Ok(d) => say(format!("applied {} edit(s)", ops.len()), d),
+        Ok(d) => say(format!("applied {} edit(s)\n{}", ops.len(), impact_text(&d["impact"])), d),
         Err(e) => die(&e),
     }
 }

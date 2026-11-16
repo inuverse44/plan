@@ -93,7 +93,7 @@ pub fn handle(msg: &Value) -> Option<Value> {
             "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "plan", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Plans of epics > stories > tasks with dependencies and estimates. Read with epics, dump, show, calc, why, log; edit with apply (one batch, all or nothing), then show to see how the deadline and critical path moved. The tool keeps plans only, not status."
+            "instructions": "Plans of epics > stories > tasks with dependencies and estimates. Read with epics, dump, show, calc, why, log; edit with apply (one batch, all or nothing); its result says how the deadline, slack and critical path moved. The tool keeps plans only, not status."
         })),
         "ping" => ok(json!({})),
         "tools/list" => ok(json!({ "tools": tools() })),
@@ -184,6 +184,7 @@ mod tests {
 
         let (err, body) = tool("apply", json!({ "epic": "demo", "ops": [{ "op": "set_task", "key": first, "patch": { "note": "via mcp" } }] }));
         assert!(!err && body["data"]["applied"] == json!(1), "{body}");
+        assert_eq!(body["data"]["impact"]["changed"], json!(false), "a note does not move the schedule: {body}");
         let (_, body) = tool("dump", json!({ "epic": "demo" }));
         assert_eq!(body["data"]["tasks"][0]["note"], "via mcp");
         let (_, body) = tool("log", json!({ "epic": "demo", "limit": 1 }));
@@ -193,6 +194,17 @@ mod tests {
         let (err, _) = tool("apply", json!({ "epic": "demo", "ops": [{ "op": "set_task", "key": first, "patch": { "note": "x" } }, { "op": "link", "task": first, "pred": first }] }));
         assert!(err);
         assert_eq!(tool("dump", json!({ "epic": "demo" })).1["data"]["tasks"][0]["note"], "via mcp");
+
+        // a longer task on the critical path moves the end, and apply says so
+        let show = tool("show", json!({ "epic": "demo" })).1;
+        let crit = show["data"]["critical_path"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string())
+            .find(|id| show["data"]["tasks"].as_array().unwrap().iter().any(|t| t["id"] == json!(id) && t["kind"] == "work")).unwrap();
+        let (err, body) = tool("apply", json!({ "epic": "demo", "ops": [{ "op": "set_task", "key": crit, "patch": { "effort": 30 } }] }));
+        let i = &body["data"]["impact"];
+        assert!(!err && i["changed"] == json!(true), "{body}");
+        assert_eq!(i["before"]["finish"], show["data"]["finish"]);
+        assert!(i["after"]["finish"].as_str().unwrap() > i["before"]["finish"].as_str().unwrap(), "{body}");
+        assert_eq!(i["after"]["finish"], tool("show", json!({ "epic": "demo" })).1["data"]["finish"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

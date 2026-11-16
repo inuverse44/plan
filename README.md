@@ -64,6 +64,15 @@ Every command accepts `--json` and returns `{"ok":true,"data":…}` or `{"ok":fa
 ]
 ```
 
+The result says how the edits moved the schedule (`impact`): the default run (first scenario, first utilization, `e`) `before` and `after` — date compared to the deadline (`target`), `finish`, `slack_to_deadline` and `critical_path` — plus `changed` and `other_runs_moved` (every other scenario × utilization × estimate whose dates moved, as `[before, after]`).
+
+```
+$ plan task set demo TF effort=20
+applied 1 edit(s)
+plan1 · 1.0 · e: target 2026-12-17 → 2027-01-20, finish 2026-12-22 → 2027-01-22, slack 3 → -16
+  26 other run(s) moved (plan calc)
+```
+
 ### MCP
 
 `plan mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io) over stdin/stdout. It uses the same store as the CLI (the server and `token_cmd` in `~/.config/plan/config`, otherwise the local SQLite) and returns the same data as `--json`.
