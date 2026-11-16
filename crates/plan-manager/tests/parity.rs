@@ -1,4 +1,6 @@
-//! Start, finish, float and free float match the original Python implementation (plan.py) for every run and every task
+//! Start, finish, float and free float match the recorded results for every run and every task.
+//! The fixture came from the original Python implementation (plan.py); floats of tasks pushed back by a freeze or a busy owner
+//! were corrected afterwards (the delay test now starts from where the task was placed), and the risk follows from them
 use plan_access::{JpRuleCalendar, TomlFile};
 use plan_manager::PlanningManager;
 use std::path::PathBuf;
@@ -25,7 +27,7 @@ fn matches_python_on_eol_gce() {
             if !ok { bad.push(format!("{} {}: py {e} rust [{}, {}, {:?}, {:?}]", r.key, t.id, t.es, t.ef, tf, ff)); }
         }
         let rk = r.risk.as_ref().unwrap();
-        assert!((p["risk"]["criticality"].as_f64().unwrap() - rk.criticality).abs() < 0.011, "risk of {}", r.key);
+        if (p["risk"]["criticality"].as_f64().unwrap() - rk.criticality).abs() >= 0.011 { bad.push(format!("risk of {}: py {} rust {}", r.key, p["risk"]["criticality"], rk.criticality)); }
     }
     assert!(bad.is_empty(), "{} / {} differ\n{}", bad.len(), n, bad.join("\n"));
     assert_eq!(ev.runs.len(), 27);

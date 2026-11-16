@@ -1,0 +1,35 @@
+# A prod task that a release freeze pushes back must have no float: delaying it moves the end
+title = "Freeze float"
+start = "2026-12-21"
+rates = [1.0]
+estimates = ["m"]
+default_owner = "me"
+
+[calendar]
+holidays = "none"
+year_end = false
+freeze = [["2026-12-22", "2026-12-24"]]
+
+[people.me]
+leave = []
+
+[[tasks]]
+id = "A"
+name = "Prepare"
+deliverable = "d"
+effort = 1
+
+[[tasks]]
+id = "CUT"
+name = "Cut over"
+deliverable = "d"
+effort = 1
+prod = true
+after = ["A"]
+
+[[tasks]]
+id = "W"
+name = "Watch"
+deliverable = "d"
+wait = 1
+after = ["CUT"]

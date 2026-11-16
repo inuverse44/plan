@@ -1,6 +1,6 @@
 //! SchedulingEngine. Encapsulates how tasks are placed.
 //! Tasks go in order of latest start from a resource-free forward/backward pass (least float first), one task per person at a time, back-filling gaps.
-//! Float is the largest delay of that one task that does not move the end, found by re-scheduling (waiting for people included).
+//! Float is the largest delay of that one task, from where it was placed, that does not move the end, found by re-scheduling (waiting for people included).
 use plan_contracts::{BusinessCalendar, Change, Issue, Kind, Schedule, Task};
 use std::collections::HashMap;
 
@@ -120,7 +120,8 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
                 if first || s_ef[p] > s0 { s0 = s_ef[p]; reason = format!("after {}", tasks[p].id); first = false; }
             }
             if first || rel[k].0 > s0 { s0 = rel[k].0; reason = rel[k].1.to_string(); }
-            if let Some((dk, d)) = delay { if dk == k && d > 0 { s0 += d; reason = "(delay test)".into(); } }
+            // delay test: start no earlier than the given slot (the placed start plus the delay)
+            if let Some((dk, m)) = delay { if dk == k && m > s0 { s0 = m; reason = "(delay test)".into(); } }
             let mut s = s0;
             let used = loop {
                 let mut used = Vec::with_capacity(dur[k]);
@@ -151,7 +152,8 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
     let mut tf = vec![None; n];
     for k in 0..n {
         if tasks[k].kind == Kind::Done { continue; }
-        let moves = |d: usize| run(Some((k, d))).3 != bend;
+        // delay from where the task was placed, not from its earliest start: a task pushed back by a freeze or a busy owner has no float hidden in that push
+        let moves = |d: usize| run(Some((k, bes[k] + d))).3 != bend;
         if moves(1) { tf[k] = Some(0); continue; }
         let cap = 240;
         let (mut lo, mut hi) = (1usize, 2usize);
