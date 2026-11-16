@@ -1,4 +1,4 @@
-// 2 つのガント（ストーリー・作業）で共通：日付の目盛り・週末・禁止期間・今日・締め切り
+// Shared by both Gantt levels (stories, tasks): date scale, weekends, freezes, today, deadline
 function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   const { css, D, iso, mdw, S } = P;
   const { run, base } = ctx, cal = S.cal;
@@ -27,16 +27,16 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   const today = iso(new Date());
   if (today >= cal.days[0] && today <= last) { const x = xd(today); head += `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5"/>` }
   if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"><title>Deadline ${mdw(S.ev.deadline)}</title></line>` }
-  // 作業の棒の左右（済で実績があれば実績の日付、そうでなければ計算した半日）
+  // Bar extent: actual dates for done tasks that have them, otherwise the computed half-days
   const bx = (t: TaskView): [number, number] => t.kind === 'done' && t.actual_start ? [xd(t.actual_start), xd(t.actual_finish || t.actual_start) + dw] : [xs(t.es), xe(t.ef > t.es ? t.ef : t.es + 1)];
   return { t0, nd, lw, rh, top, dw, W, H, xd, xs, xe, bx, last, head };
 }
 
-// ストーリー・作業の切り替え（ガントの左上）
+// Stories / Tasks switch (top left of the Gantt)
 const ganttLevel = (ctx: ViewCtx) => `<div class="seg small" style="margin-bottom:8px" role="group" aria-label="Gantt level">${[['story', 'Stories'], ['task', 'Tasks']].map(([v, l]) => `<button data-level="${v}" aria-pressed="${ctx.level === v}">${l}</button>`).join('')}</div>`;
 const wireLevel = (el: HTMLElement, ctx: ViewCtx) => el.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.onclick = () => ctx.setLevel(b.dataset.level as 'story' | 'task'));
 
-// ストーリー粒度：1 行 1 ストーリー。期間は作業の最早開始〜最遅終了、色は中で一番余裕の少ない作業
+// Story level: one row per story, spanning its earliest start to latest finish, colored by its least-float task
 P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
   const { css, esc, mdw, S } = P;
   const { run, base } = ctx;
@@ -58,7 +58,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
   const { lw, rh, top, W, xs, xe, bx, head } = ganttFrame(el, ctx, groups.length);
   let s = head;
   const ry = (i: number) => top + i * rh;
-  // ストーリーどうしの依存：別のストーリーの作業から作業へ依存があれば、1 本にまとめて引く
+  // Story dependencies: one line per pair of stories that have any task dependency between them
   const K = P.index(run), seen = new Set();
   let deps = '';
   for (const t of run.tasks) for (const p of t.reduced_after) {
@@ -91,19 +91,19 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
   el.querySelectorAll<SVGGElement>('.story-row').forEach(g => g.addEventListener('click', () => g.dataset.story ? ctx.selectStory(g.dataset.story) : null));
 };
 
-// ガント：棒を引くと開始、右端を引くと日数が変わる。依存の線は先行の終わり → 後の始まり
+// Gantt: drag a bar to move its start, drag its right edge to change its duration. Links run from a predecessor's end to a successor's start
 P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   if (ctx.level === 'story') return P.views.ganttStories(el, ctx);
   const { css, esc, D, iso, mdw, S } = P;
   const { run, base } = ctx, cal = S.cal;
   const B = P.index(base);
-  // 行：ストーリーの順（計画の stories の順）に見出し、その下に作業を動かす前の開始の順で。ストーリー無しは最後
+  // Rows: a header per story (in plan order), its tasks below by start before any move; tasks without a story last
   const stories = (ctx.plan?.stories || []);
   const sIdx: Record<string, number> = Object.fromEntries(stories.map((x, i) => [x.key, i]));
-  // 済で実績のある作業は実績の開始の順で先に、ほかは計算した開始の順
+  // Done tasks with actual dates come first by actual start, the rest by computed start
   const when = (t: TaskView) => t.kind === 'done' && t.actual_start ? (D(t.actual_start).getTime() - D('2000-01-01').getTime()) / 864e5 - 1e6 : t.es;
   const ids = base.tasks.map(t => t.id).sort((a, b) => ((sIdx[B[a].story] ?? 1e9) - (sIdx[B[b].story] ?? 1e9)) || (when(B[a]) - when(B[b])));
-  // 行は作業の id か、ストーリーの見出し
+  // A row is a task id or a story header
   const rows: (string | { story: string })[] = [];
   let curS: string | undefined = undefined;
   for (const id of ids) {
@@ -118,7 +118,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   const ry = (id: string) => top + rows.indexOf(id) * rh;
   const taskRows = rows.filter((r): r is string => typeof r === 'string');
   const rel = ctx.focus ? P.related(run, ctx.focus) : null;
-  // 選んだ行の帯
+  // Highlight of the selected row
   if (ctx.sel && rows.includes(ctx.sel)) s += `<rect x="0" y="${ry(ctx.sel)}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
 
   let deps = '';
@@ -160,7 +160,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
         stroke="${crit ? css('--f-crit') : (ctx.sel === k ? css('--focus') : 'none')}" stroke-width="${crit ? 2 : 2}" ${crit && !wait ? `stroke-opacity=".0"` : ''}><title>${esc(tip)}</title></rect>`;
       if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
       if (t.kind !== 'done') bars += `<rect class="rz" data-id="${k}" x="${x1 + w - 6}" y="${y + 6}" width="12" height="${rh - 12}" fill="transparent"/>`;
-      // 依存をつなぐつまみ：ここから別の作業へ引く
+      // Link handle: drag from here onto another task
       if (ctx.editable && (ctx.focus === k || ctx.sel === k)) bars += `<circle class="link" data-id="${k}" cx="${x1 + w + 12}" cy="${y + rh / 2}" r="6" fill="${css('--surface')}" stroke="${css('--accent')}" stroke-width="2" style="cursor:crosshair"><title>Drag onto the task that should follow</title></circle>`;
     }
     bars += `</g>`;
@@ -192,7 +192,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     };
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
   }));
-  // 引いて動かす。4px 動くまでは選ぶだけ（drag-threshold）
+  // Drag to move. Below 4 px it is a click (drag threshold)
   const slotAt = (px: number) => {
     const f = (px - lw) / dw, i = Math.floor(f), dd = iso(new Date(t0.getTime() + i * 864e5));
     const j = cal.days.indexOf(dd);

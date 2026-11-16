@@ -8,19 +8,19 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-/* 色は意味の名前で持つ（color-semantic）。暗い画面は明るさを落とした別の値（color-dark-mode） */
+/* Colors are named by meaning (color-semantic). Dark mode uses separate, dimmer values (color-dark-mode) */
 :root{
-  /* 明るい画面：ui-ux-pro-max colors.csv No.16 Productivity Tool（Teal focus + action orange） */
+  /* Light: ui-ux-pro-max colors.csv No.16 Productivity Tool (teal focus + action orange) */
   --bg:#F0FDFA; --surface:#FFFFFF; --surface-2:#E8F1F4; --fg:#134E4A; --muted:#475569; --line:#7B8798; --faint:#E8F1F4;
   --accent:#0D9488; --on-accent:#000000; --focus:#0D9488; --action:#EA580C;
-  /* 余裕の色：styles.csv Micro-interactions の反応の色（明るい画面では濃い側） */
-  /* 余裕の色：余裕 0 は橙、ほかは青 1 色の濃淡（少ないほど濃い）。青と橙は色覚の型を問わず見分けられる（dataviz の検査に合格）。赤は締め切り・遅れ・削除だけ */
+  /* Float colors: originally from styles.csv Micro-interactions (darker side in light mode) */
+  /* Float colors: zero float is orange, the rest one blue from dark (less float) to light. Blue and orange stay distinct under common color vision deficiencies. Red is only for deadlines, lateness and delete */
   --f-crit:#EA580C; --f-low:#1E3A8A; --f-mid:#2563EB; --f-high:#60A5FA;
   --crit:#134E4A; --red:#DC2626; --yellow:#D97706; --green:#16A34A; --wait:#64748B; --done:#7B8798; --freeze:rgba(220,38,38,.07);
   --sans:"IBM Plex Sans JP","Hiragino Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
   --r:8px; --fast:120ms;
 }
-/* 暗い画面：colors.csv No.81 Developer Tool / IDE（Code dark）。文字は #E2E8F0（純白はにじむ。Material の dark theme）。選んだ状態は白（青は余裕の色に使う） */
+/* Dark: colors.csv No.81 Developer Tool / IDE (code dark). Text is #E2E8F0 (pure white glares; Material dark theme). Selection is white (blue is used for float) */
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0F172A; --surface:#1B2336; --surface-2:#272F42; --fg:#E2E8F0; --muted:#94A3B8; --line:#6B7A90; --faint:#1E293B;
   --accent:#E2E8F0; --on-accent:#0F172A; --focus:#FFFFFF; --action:#F97316;

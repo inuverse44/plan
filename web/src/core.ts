@@ -1,7 +1,7 @@
-// 画面の共通部分。計算はしない（計算は WASM の PlanningManager）。ここは日付の見せ方・色・つながりのたどり方だけ。
-// 計画・計算結果の型（Plan・RunResult・TaskView など）は contracts.d.ts（Rust の plan-contracts から作る）
+// Shared UI helpers. No scheduling here (that is PlanningManager in WASM): date formatting, colors, graph traversal.
+// Plan and result types (Plan, RunResult, TaskView, ...) come from contracts.d.ts, generated from the Rust crate plan-contracts.
 
-/** 1 つの画面（ガント・矢印図・山積み・表・比べ）が受け取るもの */
+/** What each view (Gantt, network, load, table, compare) receives */
 interface ViewCtx {
   level: 'story' | 'task';
   setLevel(v: 'story' | 'task'): void;
@@ -39,11 +39,11 @@ const P = (() => {
   const mdw = (s: string) => { const d = D(s); return `${WD[d.getDay()]} ${MO[d.getMonth()]} ${d.getDate()}` };
   const pct = (r: number | string) => Math.round(Number(r) * 100) + '%';
   const num = (x: number) => Math.round(x * 100) / 100;
-  // 余裕の段（engine の FloatColor の名前）→ 色の名前
+  // Float level (FloatColor from the engine) → CSS color variable
   const COLOR: Record<ColorName, string> = { crit: '--f-crit', red: '--f-low', yellow: '--f-mid', green: '--f-high', wait: '--wait', done: '--done', muted: '--muted', accent: '--accent', focus: '--focus' };
   const COLOR_NAME: Record<FloatColor, string> = { crit: 'Critical', red: 'Low float', yellow: 'Mid float', green: 'High float', wait: 'Wait', done: 'Done' };
 
-  // 半日の番号（slot）と日付。ev・cal はエピックを開いたときに入る
+  // Half-day slots and dates. ev and cal are set when an epic is opened
   const S = {
     ev: null as unknown as Evaluation, cal: null as unknown as BusinessCalendar,
     start: (s: number) => S.cal.days[s >> 1], half: (s: number) => (s % 2 ? 'PM' : 'AM'),
@@ -57,7 +57,7 @@ const P = (() => {
     for (const t of run.tasks) for (const p of t.after) m[p]?.push(t.id);
     return m;
   }
-  // 選んだ作業から、前と後ろへたどれる作業
+  // Tasks reachable backwards and forwards from the given task
   function related(run: RunResult, id: string): Set<string> {
     const K = index(run), su = succOf(run), set = new Set([id]);
     const up = (k: string) => { for (const p of K[k]?.after || []) if (!set.has(p)) { set.add(p); up(p) } };
@@ -69,11 +69,11 @@ const P = (() => {
   }
   const LEGEND = () => legend([['--f-crit', 'Critical', 'outline:2px solid var(--f-crit);outline-offset:1px'], ['--f-low', 'Low'], ['--f-mid', 'Mid'], ['--f-high', 'High float'],
     ['--wait', 'Wait', 'background:repeating-linear-gradient(135deg,var(--wait) 0 3px,transparent 3px 6px)']]);
-  // エピック・ストーリー・サブタスクのアイコン（index.html の symbol）
+  // Epic, story and task icons (symbols in index.html)
   const ICON = (kind: 'epic' | 'story' | 'task', x: number, y: number, s = 16) => `<use href="#i-${kind}" x="${x}" y="${y}" width="${s}" height="${s}"/>`;
   let toastTimer = 0;
   function toast(s: string) { const t = $('toast'); t.textContent = s; t.style.opacity = '1'; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.opacity = '0', 1600) }
-  // 本番に触れる作業の印（絵文字にしない）
+  // Marker for tasks that touch production (an SVG, not an emoji)
   const PROD = (x: number, y: number, s = 11) => `<path d="M${x} ${y - s / 2}l${s / 2} ${s / 2}l${-s / 2} ${s / 2}l${-s / 2} ${-s / 2}z" fill="none" stroke="${css('--red')}" stroke-width="1.6"><title>Touches production (avoids release freeze)</title></path>`;
 
   const views: Record<string, View> = {};

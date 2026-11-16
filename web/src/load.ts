@@ -1,4 +1,4 @@
-// 山積み：人ごと・週ごとの工数と、使える工数（稼働率 × 営業日、休みを除く）
+// Load: effort per person per week against capacity (utilization × business days, days off excluded)
 P.views.load = function (el: HTMLElement, ctx: ViewCtx) {
   const { css, esc, D, iso, md, S } = P;
   const run = ctx.run, cal = S.cal, r = Number(run.rate);
