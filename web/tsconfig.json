@@ -1,5 +1,5 @@
 {
-  // web/src/*.ts → web/ui/*.js。モジュールにせず、index.html が読む順に並べた普通の script（plan-cli/src/web.rs の SCRIPTS）
+  // web/src/*.ts → web/ui/*.js as plain scripts (not modules), loaded in the order of SCRIPTS in plan-cli/src/web.rs
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],

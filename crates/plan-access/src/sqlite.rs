@@ -1,5 +1,5 @@
-//! SqlitePlans：計画を SQLite に置く。1 つの DB に全部のエピック。人・休み・暦はエピックをまたいで共通。
-//! 変更は全部 history 表に 1 行 1 変更（JSON）で残る（AI が「何がいつ変わったか」を読む）
+//! SqlitePlans: plans in SQLite. One database holds every epic; people, days off and the calendar are shared across epics.
+//! Every change is one row (JSON) in the history table, so an AI can read what changed and when
 use crate::plan_access::{mutate, PlanAccess, Validate};
 use chrono::NaiveDate;
 use plan_contracts::*;
@@ -42,10 +42,10 @@ CREATE TABLE IF NOT EXISTS history (
   actor TEXT NOT NULL, epic TEXT NOT NULL, op TEXT NOT NULL, payload TEXT NOT NULL);
 "#;
 
-fn e(x: impl std::fmt::Display) -> Vec<Issue> { vec![Issue::error(format!("DB：{x}"))] }
+fn e(x: impl std::fmt::Display) -> Vec<Issue> { vec![Issue::error(format!("database: {x}"))] }
 fn d(s: Option<String>) -> Option<NaiveDate> { s.and_then(|x| NaiveDate::parse_from_str(&x, "%Y-%m-%d").ok()) }
 
-/// 見積もりを読める文字にする（"1.5" か "[1, 2, 4]"）
+/// An estimate as readable text ("1.5" or "[1, 2, 4]")
 fn est_to(e: &Option<Estimate>) -> Option<String> {
     e.as_ref().map(|e| match e { Estimate::One(v) => fmt_num(*v), Estimate::Three(o, m, p) => format!("[{}, {}, {}]", fmt_num(*o), fmt_num(*m), fmt_num(*p)) })
 }
@@ -62,7 +62,7 @@ impl SqlitePlans {
         if let Some(dir) = path.parent() { let _ = std::fs::create_dir_all(dir); }
         let conn = Connection::open(path).map_err(e)?;
         conn.execute_batch(SCHEMA).map_err(e)?;
-        // 後から足した列（古い DB にも足す。既にあれば何もしない）
+        // Columns added later (added to old databases too; no-op if present)
         for col in ["actual_start", "actual_finish"] {
             let has: bool = conn.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name=?").map_err(e)?.exists([col]).map_err(e)?;
             if !has { conn.execute_batch(&format!("ALTER TABLE tasks ADD COLUMN {col} TEXT")).map_err(e)?; }
@@ -91,7 +91,7 @@ impl SqlitePlans {
         let row = c.query_row("SELECT name, description, start, start_pm, deadline, deadline_task, deadline_label, rates, estimates, round, default_owner, red, yellow FROM epics WHERE key=?", [epic], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?, r.get::<_, f64>(9)?, r.get::<_, Option<String>>(10)?, r.get::<_, f64>(11)?, r.get::<_, f64>(12)?))
-        }).optional().map_err(e)?.ok_or_else(|| vec![Issue::error(format!("エピック {epic} が無い"))])?;
+        }).optional().map_err(e)?.ok_or_else(|| vec![Issue::error(format!("no epic {epic}"))])?;
         let (calendar, people) = Self::common(c).map_err(e)?;
         let stories = c.prepare("SELECT key, name, purpose, dod FROM stories WHERE epic=? ORDER BY sort").map_err(e)?
             .query_map([epic], |r| Ok(Story { key: r.get(0)?, name: r.get(1)?, purpose: r.get(2)?, dod: r.get(3)? })).map_err(e)?.filter_map(|x| x.ok()).collect();
@@ -120,7 +120,7 @@ impl SqlitePlans {
             .query_map([epic], |r| Ok(Comment { id: r.get(0)?, target: r.get(1)?, at: r.get(2)?, by: r.get(3)?, text: r.get(4)? })).map_err(e)?.filter_map(|x| x.ok()).collect();
         let (name, description, start, start_pm, deadline, deadline_task, deadline_label, rates, ests, round, default_owner, red, yellow) = row;
         Ok(Plan {
-            key: epic.to_string(), title: name, description, start: d(Some(start)).ok_or_else(|| vec![Issue::error("start が日付でない")])?, start_pm,
+            key: epic.to_string(), title: name, description, start: d(Some(start)).ok_or_else(|| vec![Issue::error("start is not a date")])?, start_pm,
             deadline: d(deadline), deadline_task, deadline_label, rates: serde_json::from_str(&rates).unwrap_or(vec![1.0]),
             estimates: serde_json::from_str::<Vec<String>>(&ests).unwrap_or_default().iter().filter_map(|x| EstKind::parse(x)).collect(),
             round, default_owner, calendar, colors: Colors { red, yellow }, people, stories, tasks, scenarios, comments, unknown_keys: vec![],
@@ -177,7 +177,7 @@ impl PlanAccess for SqlitePlans {
         let tx = c.transaction().map_err(e)?;
         let mut plan = Self::read(&tx, epic)?;
         for op in ops { mutate(&mut plan, op).map_err(|i| vec![i])?; }
-        // 新しいコメントに時刻と書いた人を入れる
+        // Stamp new comments with the time and the author
         if plan.comments.iter().any(|c| c.at.is_empty()) {
             let now: String = tx.query_row("SELECT datetime('now','localtime')", [], |r| r.get(0)).map_err(e)?;
             for c in plan.comments.iter_mut().filter(|c| c.at.is_empty()) { c.at = now.clone(); c.by = actor.to_string(); }
@@ -193,11 +193,11 @@ impl PlanAccess for SqlitePlans {
     }
 
     fn create_epic(&self, key: &str, name: &str, start: NaiveDate, actor: &str) -> Result<(), Vec<Issue>> {
-        if key.is_empty() || key.contains(|c: char| c.is_whitespace() || c == '/') { return Err(vec![Issue::error("key は空白と / を含まない文字で")]); }
+        if key.is_empty() || key.contains(|c: char| c.is_whitespace() || c == '/') { return Err(vec![Issue::error("the key must not contain spaces or /")]); }
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction().map_err(e)?;
         let n: i64 = tx.query_row("SELECT COUNT(*) FROM epics WHERE key=?", [key], |r| r.get(0)).map_err(e)?;
-        if n > 0 { return Err(vec![Issue::error(format!("エピック {key} は既にある"))]); }
+        if n > 0 { return Err(vec![Issue::error(format!("epic {key} already exists"))]); }
         tx.execute("INSERT INTO epics (key, name, start, sort) VALUES (?,?,?,(SELECT COALESCE(MAX(sort),0)+1 FROM epics))", params![key, name, start.to_string()]).map_err(e)?;
         Self::log(&tx, actor, key, "create_epic", &serde_json::json!({ "key": key, "name": name, "start": start }).to_string()).map_err(e)?;
         tx.commit().map_err(e)
@@ -210,16 +210,16 @@ impl PlanAccess for SqlitePlans {
         for t in ["epics", "stories", "tasks", "deps", "scenarios", "comments"] {
             tx.execute(&format!("DELETE FROM {t} WHERE {}=?", if t == "epics" { "key" } else { "epic" }), [key]).map_err(e)?;
         }
-        // 消した中身は記録に残す（取り戻せるように）
+        // Keep the deleted plan in the history (so it can be restored)
         Self::log(&tx, actor, key, "delete_epic", &serde_json::to_string(&plan).unwrap()).map_err(e)?;
         tx.commit().map_err(e)
     }
 
     fn import(&self, plan: &Plan, actor: &str) -> Result<(), Vec<Issue>> {
-        if plan.key.is_empty() { return Err(vec![Issue::error("取り込む計画に key が無い")]); }
+        if plan.key.is_empty() { return Err(vec![Issue::error("the imported plan has no key")]); }
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction().map_err(e)?;
-        // 共通の暦と人は足し合わせる（別のエピックの分を消さない）
+        // Merge the shared calendar and people (do not remove other epics' entries)
         let cal = &plan.calendar;
         tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('holidays', ?), ('year_end', ?)", params![if cal.holidays_jp { "JP" } else { "none" }, cal.year_end.to_string()]).map_err(e)?;
         for d in &cal.off { tx.execute("INSERT OR IGNORE INTO calendar_off (day) VALUES (?)", [d.to_string()]).map_err(e)?; }

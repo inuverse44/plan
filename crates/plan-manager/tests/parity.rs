@@ -1,4 +1,4 @@
-//! 元の Python 版（plan.py）の結果と、全部の組み・全部の作業で開始・終了・余裕・自由余裕が一致するか
+//! Start, finish, float and free float match the original Python implementation (plan.py) for every run and every task
 use plan_access::{JpRuleCalendar, TomlFile};
 use plan_manager::PlanningManager;
 use std::path::PathBuf;
@@ -14,8 +14,8 @@ fn matches_python_on_eol_gce() {
     let mut n = 0;
     for r in &ev.runs {
         let p = &py[&r.key];
-        assert!(!p.is_null(), "組み {} が Python に無い", r.key);
-        assert_eq!(p["end_slot"].as_u64().unwrap() as usize, r.end, "{} の終わり", r.key);
+        assert!(!p.is_null(), "run {} missing from the Python results", r.key);
+        assert_eq!(p["end_slot"].as_u64().unwrap() as usize, r.end, "end of {}", r.key);
         for t in &r.tasks {
             n += 1;
             let e = &p["tasks"][&t.id];
@@ -25,9 +25,9 @@ fn matches_python_on_eol_gce() {
             if !ok { bad.push(format!("{} {}: py {e} rust [{}, {}, {:?}, {:?}]", r.key, t.id, t.es, t.ef, tf, ff)); }
         }
         let rk = r.risk.as_ref().unwrap();
-        assert!((p["risk"]["criticality"].as_f64().unwrap() - rk.criticality).abs() < 0.011, "{} のリスク", r.key);
+        assert!((p["risk"]["criticality"].as_f64().unwrap() - rk.criticality).abs() < 0.011, "risk of {}", r.key);
     }
-    assert!(bad.is_empty(), "違う {} / {} 件\n{}", bad.len(), n, bad.join("\n"));
+    assert!(bad.is_empty(), "{} / {} differ\n{}", bad.len(), n, bad.join("\n"));
     assert_eq!(ev.runs.len(), 27);
 }
 

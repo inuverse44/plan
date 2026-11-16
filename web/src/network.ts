@@ -1,9 +1,9 @@
-// 矢印図：作業＝矢印、節目＝丸。段を飛ぶ矢印には仮の点を足して自分の行を通す。横に長ければ枠の縦横比で折り返す（2 段目は左へ戻る）
+// Activity-on-arrow network: tasks are arrows, events are circles. Arrows that skip layers get virtual points. Wide graphs wrap to the frame's aspect ratio (odd rows run right to left)
 P.views.net = function (el: HTMLElement, ctx: ViewCtx) {
   const { css, esc } = P;
-  // 済んだ作業は外す（これからの依存だけを描く）
+  // Leave out done tasks (draw only the remaining dependencies)
   const run = { ...ctx.run, tasks: ctx.run.tasks.filter(t => t.kind !== 'done').map(t => ({ ...t, reduced_after: t.reduced_after.filter(p => ctx.run.tasks.find(x => x.id === p)?.kind !== 'done') })) }, K = P.index(run);
-  // 辺：作業の矢印（id あり）か、つなぎのダミー。pts は通る点（仮の点を含む）
+  // Edge: a task arrow (with id) or a dummy. pts are the points it passes (virtual points included)
   type Edge = { a: string; b: string; id?: string; dummy?: boolean; pts: string[] };
   type Pt = { x: number; y: number; row: number };
   const order = run.tasks.map(t => t.id);
@@ -20,7 +20,7 @@ P.views.net = function (el: HTMLElement, ctx: ViewCtx) {
   };
   for (const k of order) E.push({ a: startN(k), b: endN[k], id: k, pts: [] });
   if (sinks.length > 1) for (const k of sinks) E.push({ a: endN[k], b: 'F', dummy: true, pts: [] });
-  // ダミーを減らす：作業の終わりの丸からダミー 1 本しか出ないなら、作業の矢印をダミーの先へつなぐ
+  // Remove dummies: if a task's end event has only one outgoing dummy, connect the task arrow to the dummy's target
   for (let again = true; again;) {
     again = false;
     for (const d of E.filter(e => e.dummy)) {
@@ -66,8 +66,8 @@ P.views.net = function (el: HTMLElement, ctx: ViewCtx) {
     const r = rank[n], row = Math.floor(r / per), c = r % per, L = layers[r];
     Pn[n] = { x: pad + (row % 2 ? per - 1 - c : c) * dx, y: pad + row * rowH + ((maxL - L.length) * dy) / 2 + ord[n] * dy, row };
   }
-  // 段を飛ぶ矢印は、同じ行の仮の点を 1 つの高さにそろえてまっすぐ通す（段ごとに上下するとギザギザになる）。
-  // 他の矢印の通り道・丸とぶつかる高さは避けて、半段ずつずらす
+  // Align the virtual points of a long arrow at one height per row so it runs straight (otherwise it zigzags layer by layer).
+  // Avoid heights taken by other lanes or circles by shifting half a step at a time
   const lanes: { row: number; x0: number; x1: number; y: number }[] = [], near = dy * 0.45;
   const chains: string[][] = [];
   E.forEach(e => {

@@ -1,19 +1,19 @@
-//! Google のトークンの出どころ。Cloud Run の中ではメタデータサーバー、手元では gcloud のコマンド
+//! Where Google tokens come from: the metadata server on Cloud Run, a gcloud command locally
 use plan_contracts::Issue;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub(crate) fn e(x: impl std::fmt::Display) -> Vec<Issue> { vec![Issue::error(x.to_string())] }
 
-/// トークンを作る方法
+/// How to get a token
 pub enum TokenSource {
-    /// Cloud Run の中：メタデータサーバーのアクセストークン
+    /// On Cloud Run: an access token from the metadata server
     Metadata,
-    /// 手元：シェルのコマンド（例 `gcloud auth print-access-token`）の出力
+    /// Locally: the output of a shell command (e.g. `gcloud auth print-access-token`)
     Command(String),
 }
 
-/// 作ったトークンを 45 分使い回す（Google のトークンは 1 時間で切れる）
+/// Reuse a token for 45 minutes (Google tokens expire after an hour)
 pub struct Tokens {
     src: TokenSource,
     cache: Mutex<Option<(String, Instant)>>,
@@ -29,11 +29,11 @@ impl Tokens {
             TokenSource::Metadata => {
                 let v: serde_json::Value = ureq::get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token")
                     .set("Metadata-Flavor", "Google").call().map_err(e)?.into_json().map_err(e)?;
-                v["access_token"].as_str().ok_or_else(|| e("メタデータサーバーがトークンを返さない"))?.to_string()
+                v["access_token"].as_str().ok_or_else(|| e("the metadata server returned no token"))?.to_string()
             }
             TokenSource::Command(cmd) => {
                 let out = std::process::Command::new("sh").arg("-c").arg(cmd).output().map_err(e)?;
-                if !out.status.success() { return Err(e(format!("トークンを作れない（{cmd}）：{}", String::from_utf8_lossy(&out.stderr).trim()))); }
+                if !out.status.success() { return Err(e(format!("cannot get a token ({cmd}): {}", String::from_utf8_lossy(&out.stderr).trim()))); }
                 String::from_utf8_lossy(&out.stdout).trim().to_string()
             }
         };
@@ -42,5 +42,5 @@ impl Tokens {
     }
 }
 
-/// Cloud Run の中で動いているか（Cloud Run は K_SERVICE を入れる）
+/// Whether we run on Cloud Run (it sets K_SERVICE)
 pub fn on_cloud_run() -> bool { std::env::var("K_SERVICE").is_ok() }

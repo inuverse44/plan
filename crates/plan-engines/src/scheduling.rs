@@ -1,6 +1,6 @@
-//! SchedulingEngine：隠す変化は「並べ方」。
-//! 人を数えない前進・後退計算の最遅開始の早い順（余裕の小さい順）に、1 人 1 度に 1 つで置き、隙間に詰める。
-//! 余裕は、その作業だけを遅らせて計算し直し、全体の終わりが動かない最大の遅れ（人の待ちも込み）。
+//! SchedulingEngine. Encapsulates how tasks are placed.
+//! Tasks go in order of latest start from a resource-free forward/backward pass (least float first), one task per person at a time, back-filling gaps.
+//! Float is the largest delay of that one task that does not move the end, found by re-scheduling (waiting for people included).
 use plan_contracts::{BusinessCalendar, Change, Issue, Kind, Schedule, Task};
 use std::collections::HashMap;
 
@@ -12,12 +12,12 @@ pub fn topo(tasks: &[Task]) -> Result<Vec<usize>, Issue> {
         if state[i] == 2 { return Ok(()); }
         if state[i] == 1 {
             path.push(tasks[i].id.clone());
-            return Err(Issue::error(format!("依存が輪になっている：{}", path.join(" → "))));
+            return Err(Issue::error(format!("dependency loop: {}", path.join(" → "))));
         }
         state[i] = 1;
         path.push(tasks[i].id.clone());
         for p in &tasks[i].after {
-            let j = *idx.get(p.as_str()).ok_or_else(|| Issue::error(format!("after に無い作業 {p}")).at(None, Some(&tasks[i].id)))?;
+            let j = *idx.get(p.as_str()).ok_or_else(|| Issue::error(format!("unknown task in after: {p}")).at(None, Some(&tasks[i].id)))?;
             visit(j, tasks, idx, state, order, path)?;
         }
         path.pop();
@@ -29,7 +29,7 @@ pub fn topo(tasks: &[Task]) -> Result<Vec<usize>, Issue> {
     Ok(order)
 }
 
-/// 推移的な依存を省いた先行（A→B→C と A→C があれば A→C を消す）
+/// Predecessors without transitive ones (with A→B→C and A→C, A→C is dropped)
 pub fn reduce(tasks: &[Task]) -> Vec<Vec<String>> {
     let idx: HashMap<&str, usize> = tasks.iter().enumerate().map(|(i, t)| (t.id.as_str(), i)).collect();
     let mut memo: Vec<Option<std::collections::HashSet<String>>> = vec![None; tasks.len()];
@@ -53,7 +53,7 @@ fn slot_on_or_after(cal: &BusinessCalendar, d: chrono::NaiveDate) -> usize {
     cal.days.iter().position(|x| *x >= d).unwrap_or(cal.days.len()) * 2
 }
 
-/// 開始の下限（計画の開始・not_before・fixed・動かした開始の大きい方）と、その理由
+/// Earliest start (the latest of plan start, not_before, fixed and a moved start) and the reason
 pub fn release(t: &Task, cal: &BusinessCalendar, ch: Option<&Change>) -> (usize, &'static str) {
     let mut s = cal.start_slot;
     let mut why = "plan start";
@@ -78,7 +78,7 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
     let mut succ = vec![Vec::new(); n];
     for (i, ps) in preds.iter().enumerate() { for &p in ps { succ[p].push(i); } }
 
-    // 人を数えない前進・後退（並べる順のためだけ）
+    // Resource-free forward/backward pass (only for the order)
     let mut es = vec![0i64; n];
     let mut ef = vec![0i64; n];
     for &k in &order {

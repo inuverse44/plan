@@ -1,4 +1,4 @@
-//! WebClient の計算の窓口（WASM）。サーバーから受け取ったエピック 1 つ分の計画（JSON）で PlanningManager を動かす
+//! The WebClient's calculation entry point (WASM). Runs PlanningManager on one epic's plan (JSON) received from the server
 use plan_access::{JpRuleCalendar, JsonPlan};
 use plan_contracts::{Change, EstKind, Issue, Plan};
 use plan_manager::PlanningManager;
@@ -19,7 +19,7 @@ impl Planner {
     pub fn new(plan_json: String) -> Planner {
         match serde_json::from_str::<Plan>(&plan_json) {
             Ok(p) => Planner { mgr: Some(PlanningManager::new(Arc::new(JsonPlan(p)), Arc::new(JpRuleCalendar))), err: vec![] },
-            Err(e) => Planner { mgr: None, err: vec![Issue::error(format!("計画の JSON を読めない：{e}"))] },
+            Err(e) => Planner { mgr: None, err: vec![Issue::error(format!("cannot read the plan JSON: {e}"))] },
         }
     }
 

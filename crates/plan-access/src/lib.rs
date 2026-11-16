@@ -1,4 +1,4 @@
-//! 資源を業務の動詞で出す。隠す変化は「計画の置き場と形式」と「暦の出どころ」
+//! Resources in business verbs. Encapsulates where and how plans are stored, and where the calendar comes from
 pub mod calendar_access;
 pub mod plan_access;
 #[cfg(not(target_arch = "wasm32"))]

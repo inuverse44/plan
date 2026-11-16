@@ -1,10 +1,10 @@
-// 画面の進行。#/ はエピックの一覧、#/e/KEY はエピック。
-// 計算は WASM の Planner（PlanningManager）。編集はサーバーの API（PlanEditingManager）に送り、SQLite に残る
-// サーバー（plan-cli の serve.rs）の答え
+// Routing and state. #/ lists the epics, #/e/KEY opens one.
+// Scheduling runs in WASM (Planner → PlanningManager). Edits go to the server API (PlanEditingManager) and are stored there.
+// Responses of the server (plan-cli serve.rs)
 type ApiRes<T = unknown> = { ok: true; data: T } | { ok: false; issues: Issue[] };
 type Boot = { mode: 'live' } | { mode: 'export'; plan: Plan; wasm: string };
 type ViewKey = 'gantt' | 'net' | 'load' | 'table' | 'cmp';
-/** 画面で動かした変更（作業の id ごと）。案・稼働率・見積もりの組みごとに持つ */
+/** Moves tried in the UI, per task id. Kept separately for each scenario × utilization × estimate. */
 type Moves = Record<string, { min_start?: number; dur?: number }>;
 type Draft = { kind: 'task'; story: string } | { kind: 'story' };
 
@@ -22,7 +22,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     changes: {} as Record<string, Moves>, hist: {} as Record<string, string[]>, fut: {} as Record<string, string[]>, pending: null as string | null,
     prefs: {} as Record<string, { s: string; r: string; e: EstKind }>,
   };
-  // エピックを開いていないときは null（開く前に使う所は無い。render などは ev を見てから進む）
+  // null while no epic is open (nothing reads them before that; render checks ev first)
   let planner: wasm_bindgen.Planner = null!, ev: Evaluation = null!, plan: Plan = null!, version: number | null = null, curCache: { sig: string; run: RunResult } | null = null;
   try { const k = JSON.parse(localStorage.getItem(KEEP) || '{}'); st.view = k.view || 'gantt'; st.level = k.level || 'task'; st.prefs = k.prefs || {} } catch { st.prefs = {} }
   await wasm_bindgen(boot.mode === 'live' ? { module_or_path: '/pkg/plan_web_bg.wasm' } : { module_or_path: Uint8Array.from(atob(boot.wasm), c => c.charCodeAt(0)) });
@@ -31,12 +31,12 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   const key = () => `${st.s}|${fmt(st.r)}|${st.e}`;
   const save = () => { try { if (st.epic) st.prefs[st.epic] = { s: st.s, r: st.r, e: st.e }; localStorage.setItem(KEEP, JSON.stringify({ view: st.view, level: st.level, prefs: st.prefs })) } catch { } };
   const api = async <T = unknown>(path: string, body?: unknown): Promise<ApiRes<T>> => (await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) })).json();
-  // 中の要素（必ずある所だけに使う）
+  // Child element that is known to exist
   const q = <T extends Element = HTMLElement>(root: ParentNode, sel: string) => root.querySelector(sel) as T;
-  const issueText = (is: Issue[]) => is.map(i => (i.scenario ? `[${i.scenario}] ` : '') + (i.task ? i.task + '：' : '') + i.message).join('\n');
+  const issueText = (is: Issue[]) => is.map(i => (i.scenario ? `[${i.scenario}] ` : '') + (i.task ? i.task + ': ' : '') + i.message).join('\n');
   const hasScenarios = () => plan && plan.scenarios.length > 0;
 
-  // ---------- 一覧 ----------
+  // ---------- Epic list ----------
   async function home() {
     st.epic = null; ev = null!; plan = null!;
     $('app-epic').hidden = true; $('app-help').hidden = true; $('app-home').hidden = false;
@@ -58,7 +58,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     location.hash = '#/e/' + encodeURIComponent(body.key);
   };
 
-  // ---------- エピック ----------
+  // ---------- Epic ----------
   function evaluate() {
     planner = new wasm_bindgen.Planner(JSON.stringify(plan));
     const res: { ok: true; evaluation: Evaluation } | { ok: false; issues: Issue[] } = JSON.parse(planner.evaluate());
@@ -86,7 +86,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     if (evaluate()) render();
   }
 
-  // 編集を送る（SQLite に残る）。送った後は読み直す
+  // Send edits to the server (stored there), then reload
   async function edit(ops: EditOp[]): Promise<boolean> {
     if (!LIVE || !st.epic) return false;
     const res = await api('/api/epic/' + encodeURIComponent(st.epic) + '/ops', { ops });
@@ -94,11 +94,11 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     await openEpic(st.epic, true);
     return true;
   }
-  // 編集先：すべての案（基の作業）か、この案だけ（案の差分）
+  // Edit target: all scenarios (the base tasks) or only this scenario (its overrides)
   const scen = () => (hasScenarios() && st.target === 'one' ? st.s : undefined);
   const setTask = (k: string, patch: TaskPatch) => edit([{ op: 'set_task', key: k, patch, scenario: scen() }]);
 
-  // ---------- 動かしてみる ----------
+  // ---------- What-if moves ----------
   const baseRun = () => ev.runs.find(r => r.key === key())!;
   const changeList = (): Change[] => Object.entries(st.changes[key()] || {}).map(([id, v]) => ({ id, ...v }));
   function curRun(): RunResult {
@@ -131,7 +131,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     P.toast('Saved'); await openEpic(st.epic, false);
   }
 
-  // ---------- 上の操作 ----------
+  // ---------- Top controls ----------
   const EST: Record<EstKind, string> = { o: 'Optimistic', m: 'Most likely', e: 'Expected (PERT)', p: 'Pessimistic' };
   function sel(name: 's' | 'r' | 'e', label: string, items: [string, string][], cur: string, title: string) {
     return `<label class="field" title="${esc(title)}">${label}<select data-k="${name}">${items.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
@@ -170,11 +170,11 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     $<HTMLButtonElement>('reset').disabled = !changed; $<HTMLButtonElement>('save').disabled = !changed;
   }
 
-  // ---------- 右の欄（作業・ストーリー・エピックを直す） ----------
+  // ---------- Side panel (edit a task, story or epic) ----------
   const estText = (e: Estimate | null | undefined) => e == null ? '' : Array.isArray(e) ? e.join(', ') : String(e);
   const estParse = (s: string): Estimate | null => { const xs = s.split(/[,、\s]+/).filter(Boolean).map(Number); if (!xs.length || xs.some(isNaN)) return null; return xs.length === 3 ? [xs[0], xs[1], xs[2]] : xs.length === 1 ? xs[0] : null };
   function specOf(id: string): TaskSpec {
-    // 選んだ案での作業の中身（基＋案の差分）。表示用
+    // The task as seen in the selected scenario (base + overrides), for display
     const t: TaskSpec & Record<string, unknown> = { ...(plan.tasks.find(x => x.id === id) || { id, name: id }) };
     const sc = plan.scenarios.find(s => s.key === st.s);
     const add = sc?.add?.find(x => x.id === id); if (add) return { ...add };
@@ -193,7 +193,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     const ro = !LIVE;
     const inp = (f: string, v: unknown, ph = '') => `<input data-f="${f}" value="${esc(v ?? '')}" placeholder="${esc(ph)}" ${ro ? 'disabled' : ''}>`;
     const stories: [string, string][] = [['', '—'], ...plan.stories.map((s): [string, string] => [s.key, s.name])];
-    // 先行の候補：自分・既に先行・自分の後ろ（つなぐと輪になる）を除く
+    // Predecessor candidates: exclude itself, current predecessors and its successors (linking would make a loop)
     const desc = descend(cur, t.id), others = cur.tasks.filter(x => x.id !== t.id && !t.after.includes(x.id) && !desc.has(x.id));
     el.innerHTML = `<button class="close" aria-label="Close (Esc)">×</button>
       ${hasScenarios() && LIVE ? `<div class="seg small" style="margin-bottom:10px">${[['all', 'All scenarios'], ['one', 'This scenario']].map(([v, l]) => `<button data-target="${v}" aria-pressed="${st.target === v}">${l}</button>`).join('')}</div>` : ''}
@@ -246,7 +246,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     q(el, '.close').onclick = () => { st.selStory = null; render() };
     notesWire(el, s.key);
     el.querySelectorAll<HTMLInputElement>('[data-f]').forEach(i => i.onchange = () => edit([{ op: 'set_story', story: { ...s, [i.dataset.f!]: i.value.trim() } }]));
-    // 中の作業も一緒に消す（作業だけ残ると、どこにも属さない作業が増える）
+    // Delete the story's tasks too (otherwise they would be left without a story)
     $('del-story').onclick = async () => { if (await edit([...inside.map((t): EditOp => ({ op: 'delete_task', key: t.id })), { op: 'delete_story', key: s.key }])) { st.selStory = null; P.toast(`Deleted ${s.key}${inside.length ? ` and ${inside.length} tasks` : ''}`) } };
   }
   function epicPanel(el: HTMLElement) {
@@ -268,7 +268,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     if (sc) $('del-sc').onclick = () => edit([{ op: 'delete_scenario', key: sc.key }]);
   }
 
-  // ---------- 描く ----------
+  // ---------- Render ----------
   let raf = 0;
   function schedule() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render() }) }
   function render() {
@@ -290,7 +290,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     (P.views[st.view] || P.views.gantt)($('view'), ctx);
   }
 
-  // ---------- 足す ----------
+  // ---------- Add ----------
   $('add-task').onclick = () => { st.draft = { kind: 'task', story: st.selStory || (st.sel ? specOf(st.sel).story : '') || '' }; st.settings = false; render() };
   $('add-story').onclick = () => { st.draft = { kind: 'story' }; st.settings = false; render() };
   function draftPanel(el: HTMLElement) {
@@ -324,8 +324,8 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     setTimeout(() => q(f, '[data-d=name]').focus(), 0);
   }
 
-  // ---------- コメント（一次情報のリンクなど） ----------
-  // URL はリンクに、長い URL は場所だけ見せる
+  // ---------- Comments (e.g. links to the source of truth) ----------
+  // Turn URLs into links; show long URLs as host + short path
   const linkify = (s: string) => esc(s).replace(/https?:\/\/[^\s<]+/g, u => { let host = u; try { const x = new URL(u.replace(/&amp;/g, '&')); host = x.host + (x.pathname.length > 1 ? x.pathname.slice(0, 28) + (x.pathname.length > 28 ? '…' : '') : '') } catch { } return `<a href="${u}" target="_blank" rel="noopener" title="${u}">${esc(host)}</a>` });
   function notesHtml(target: string) {
     const cs = (plan.comments || []).filter(c => c.target === target);
@@ -340,7 +340,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     ta.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); const t = ta.value.trim(); if (t) edit([{ op: 'add_comment', target, text: t }]) } };
   }
 
-  // ---------- キーボード ----------
+  // ---------- Keyboard ----------
   addEventListener('keydown', e => {
     if ((e.target as Element).closest('input,textarea,select') || !ev || !st.epic) return;
     const mod = e.metaKey || e.ctrlKey;
@@ -365,7 +365,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   });
   $('undo').onclick = undo; $('redo').onclick = redo; $('reset').onclick = reset; $('save').onclick = saveChanges;
   $('back').onclick = () => location.hash = '#/';
-  // 明るい・暗いの切り替え（選んだ方を覚える。未選択ならシステムに合わせる）
+  // Light/dark toggle (remembered; follows the system until chosen)
   const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
   document.querySelectorAll<HTMLElement>('.theme').forEach(b => b.onclick = () => {
     const t = isDark() ? 'light' : 'dark';
@@ -377,7 +377,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   let rz = 0; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 150) });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
 
-  // ---------- 道順と、外での変更（CLI・AI）の取り込み ----------
+  // ---------- Routing and picking up changes made elsewhere (CLI, AI) ----------
   function help() {
     $('app-home').hidden = true; $('app-epic').hidden = true; $('app-help').hidden = false; document.title = 'Help';
     $('app-help').innerHTML = HELP;
@@ -400,7 +400,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   route();
 })();
 
-// 説明書（画面には置かない。? から開く）。式は TeX で書き、KaTeX で描く
+// Help page (kept off the main screen; opened from ?). Formulas are TeX rendered with KaTeX
 var HELP = String.raw`<p><a href="javascript:history.back()">← Back</a></p>
 <h1>Help</h1>
 <h2>Units</h2>
@@ -447,12 +447,12 @@ $$R_f = \frac{4.24N_c + 2.62N_r + 1.62N_y + N_g}{4.24N}, \qquad R_a = 1 - \frac{
 <li>J. E. Kelley Jr., M. R. Walker, “Critical-path planning and scheduling,” <i>Proc. Eastern Joint Computer Conference</i>, Boston, 1959, p. 160ff.</li>
 <li>W3C, <a href="https://www.w3.org/TR/WCAG21/#non-text-contrast"><i>Web Content Accessibility Guidelines 2.1</i></a>, SC 1.4.3 Contrast (Minimum) and SC 1.4.11 Non-text Contrast, 2018.</li>
 <li>Google, <a href="https://m2.material.io/design/color/dark-theme"><i>Material Design: Dark theme</i></a>.</li>
-<li>鳥取県, <a href="https://www.pref.tottori.lg.jp/item/1100584.htm">カラーユニバーサルデザイン</a>.</li>
+<li>Tottori Prefecture, <a href="https://www.pref.tottori.lg.jp/item/1100584.htm">カラーユニバーサルデザイン</a> (Color universal design, in Japanese).</li>
 <li>nextlevelbuilder, <a href="https://github.com/nextlevelbuilder/ui-ux-pro-max-skill"><i>ui-ux-pro-max-skill</i></a> (MIT), colors.csv No. 16 Productivity Tool and No. 81 Developer Tool.</li>
-<li>国民の祝日に関する法律（昭和 23 年法律第 178 号）. Equinox days are computed with the usual approximation valid for 1980–2099.</li>
+<li>国民の祝日に関する法律（昭和 23 年法律第 178 号） (Act on National Holidays, Act No. 178 of 1948, in Japanese). Equinox days are computed with the usual approximation valid for 1980–2099.</li>
 </ol>`;
 
-// KaTeX は Help を開いたときだけ読む（式を TeX で描く）
+// Load KaTeX only when Help is opened
 declare function renderMathInElement(el: HTMLElement, opts: object): void;
 function renderMath(el: HTMLElement) {
   const go = () => renderMathInElement(el, { delimiters: [{ left: '$$', right: '$$', display: true }, { left: '\\(', right: '\\)', display: false }], throwOnError: false });

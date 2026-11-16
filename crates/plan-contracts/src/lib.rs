@@ -1,11 +1,11 @@
-//! 層をまたいで受け渡す型だけを置く（振る舞いは持たない）。設計は docs/design-v0.3.md
+//! Types passed between layers, and nothing else (no behavior). See docs/design.md
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-// ---------- 計画（PlanAccess が読み、Engine が使う） ----------
+// ---------- Plans (read by PlanAccess, used by the engines) ----------
 
-/// 工数・待ちの見積もり。1 つの数か、楽観・最も起こりうる・悲観の 3 つ
+/// An effort or wait estimate: one number, or optimistic, most likely and pessimistic
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(untagged)]
@@ -14,7 +14,7 @@ pub enum Estimate {
     Three(f64, f64, f64),
 }
 
-/// 見積もりの種類
+/// Kind of estimate
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
@@ -30,7 +30,7 @@ impl EstKind {
         match self { EstKind::O => "o", EstKind::M => "m", EstKind::E => "e", EstKind::P => "p" }
     }
     pub fn name(self) -> &'static str {
-        match self { EstKind::O => "楽観", EstKind::M => "最も起こりうる", EstKind::E => "期待値（PERT）", EstKind::P => "悲観" }
+        match self { EstKind::O => "optimistic", EstKind::M => "most likely", EstKind::E => "expected (PERT)", EstKind::P => "pessimistic" }
     }
     pub fn parse(s: &str) -> Option<EstKind> {
         match s { "o" => Some(EstKind::O), "m" => Some(EstKind::M), "e" => Some(EstKind::E), "p" => Some(EstKind::P), _ => None }
@@ -64,7 +64,7 @@ pub struct Person {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TaskSpec {
     pub id: String,
-    /// 属するストーリーの key（空ならストーリー無し）
+    /// Key of the story this task belongs to (empty: no story)
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub story: String,
     pub name: String,
@@ -82,7 +82,7 @@ pub struct TaskSpec {
     pub effort: Option<Estimate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait: Option<Estimate>,
-    /// None は default_owner に任せる
+    /// None falls back to default_owner
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owners: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -95,7 +95,7 @@ pub struct TaskSpec {
     pub fixed: Option<NaiveDate>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub done: bool,
-    /// 実績（Jira の開始日・解決日など）。計算には使わず、ガントに過去の棒として描く
+    /// Actual dates (e.g. from an issue tracker). Not used for scheduling; drawn as past bars in the Gantt chart
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actual_start: Option<NaiveDate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,7 +104,7 @@ pub struct TaskSpec {
     pub unknown_keys: Vec<String>,
 }
 
-/// 案で上書きする項目（書かれた項目だけ Some）
+/// Fields a scenario overrides (only the written ones are Some)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TaskPatch {
@@ -142,7 +142,7 @@ pub struct TaskPatch {
     pub actual_start: Option<NaiveDate>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actual_finish: Option<NaiveDate>,
-    /// 消す項目の名前（not_before・fixed・effort・wait・owners）
+    /// Names of fields to clear (not_before, fixed, effort, wait, owners)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clear: Vec<String>,
 }
@@ -156,18 +156,18 @@ pub struct Story {
     pub dod: String,
 }
 
-/// 作業・ストーリーに残すコメント（一次情報のリンクなど）。日程の計算には使わない
+/// A comment on a task or story (for example a link to the source). Not used for scheduling
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(rename = "PlanComment"))]
 pub struct Comment {
     pub id: i64,
-    /// 作業かストーリーの key
+    /// Key of a task or story
     pub target: String,
-    /// 書いた時刻（YYYY-MM-DD HH:MM:SS）。書くときに入る
+    /// When it was written (YYYY-MM-DD HH:MM:SS); set on write
     #[serde(default)]
     pub at: String,
-    /// 書いた人（web・cli など）。書くときに入る
+    /// Who wrote it (web, cli, ...); set on write
     #[serde(default)]
     pub by: String,
     pub text: String,
@@ -187,7 +187,7 @@ pub struct ScenarioSpec {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Plan {
-    /// エピックの key
+    /// Epic key
     #[serde(default)]
     pub key: String,
     pub title: String,
@@ -207,30 +207,30 @@ pub struct Plan {
     #[serde(default)]
     pub stories: Vec<Story>,
     pub tasks: Vec<TaskSpec>,
-    /// 空なら基の案 1 つ
+    /// Empty: just the base scenario
     pub scenarios: Vec<ScenarioSpec>,
     #[serde(default)]
     pub comments: Vec<Comment>,
     pub unknown_keys: Vec<String>,
 }
 
-// ---------- 暦（CalendarAccess が作る） ----------
+// ---------- Calendar (built by CalendarAccess) ----------
 
-/// 営業日の列。時刻は「半日の番号」（slot）で数える：日 i の午前が 2i、午後が 2i+1
+/// Business days. Time is counted in half-day slots: day i morning is 2i, afternoon is 2i+1
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct BusinessCalendar {
     pub days: Vec<NaiveDate>,
     pub start_slot: usize,
-    /// days と同じ長さ。本番に触れてはいけない日
+    /// Same length as days: days when production must not be touched
     pub frozen: Vec<bool>,
-    /// 人ごとの休み（days の番号）
+    /// Days off per person (indexes into days)
     pub leave: BTreeMap<String, Vec<usize>>,
-    /// 平日のうち営業日でない日（祝日・年末年始・off）。画面の網掛け用
+    /// Weekdays that are not business days (holidays, year end, off). Shaded in the UI
     pub off: Vec<NaiveDate>,
 }
 
-// ---------- 1 回の計算（Engine どうしの受け渡し） ----------
+// ---------- One calculation (passed between engines) ----------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -242,7 +242,7 @@ pub enum Kind {
     Done,
 }
 
-/// 案ごとの作業（ScenarioEngine の出力）
+/// Tasks of one scenario (output of ScenarioEngine)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Scenario {
@@ -252,15 +252,15 @@ pub struct Scenario {
     pub tasks: Vec<TaskSpec>,
 }
 
-/// 日数の決まった作業（EstimationEngine の出力、SchedulingEngine の入力）
+/// A task with a fixed duration (output of EstimationEngine, input of SchedulingEngine)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Task {
     pub id: String,
     pub kind: Kind,
-    /// 半日の数
+    /// In half-days
     pub dur: usize,
-    /// 工数（人日）か待ち（営業日）
+    /// Effort (person-days) or wait (business days)
     pub val: f64,
     pub owners: Vec<String>,
     pub after: Vec<String>,
@@ -269,7 +269,7 @@ pub struct Task {
     pub fixed: Option<NaiveDate>,
 }
 
-/// 画面で動かした変更。min_start は開始の下限（半日の番号）、dur は日数（半日の数）
+/// A move made in the UI. min_start is the earliest start (slot), dur the duration (half-days)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields))]
@@ -279,19 +279,19 @@ pub struct Change {
     pub dur: Option<usize>,
 }
 
-/// SchedulingEngine の出力。添字は tasks と同じ
+/// Output of SchedulingEngine. Indexes match tasks
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Schedule {
     pub order: Vec<usize>,
     pub es: Vec<usize>,
     pub ef: Vec<usize>,
-    /// 余裕（半日の数）。済は None
+    /// Float in half-days. None for done tasks
     pub tf: Vec<Option<usize>>,
     pub ff: Vec<Option<usize>>,
     pub why: Vec<String>,
     pub end: usize,
-    /// 推移的な依存を省いた先行
+    /// Predecessors without transitive ones
     pub reduced_after: Vec<Vec<String>>,
 }
 
@@ -315,7 +315,7 @@ pub struct Risk {
     pub activity: Option<f64>,
 }
 
-/// AnalysisEngine の出力
+/// Output of AnalysisEngine
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Assessment {
@@ -324,14 +324,14 @@ pub struct Assessment {
     pub effort: BTreeMap<String, f64>,
     pub effort_total: f64,
     pub efficiency: Option<f64>,
-    /// 人 → 日付 → 使う工数（人日）
+    /// Person → date → effort used (person-days)
     pub load: BTreeMap<String, BTreeMap<NaiveDate, f64>>,
     pub target_slot: usize,
     pub slack_to_deadline: Option<i64>,
     pub critical_path: Vec<String>,
 }
 
-// ---------- 外へ出す形（Manager → Client） ----------
+// ---------- Results (Manager → Client) ----------
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -371,7 +371,7 @@ pub struct RunResult {
     pub scenario: String,
     pub rate: f64,
     pub est: EstKind,
-    /// 並べた順（order）に並ぶ
+    /// In scheduling order
     pub tasks: Vec<TaskView>,
     pub end: usize,
     pub target: usize,
@@ -411,7 +411,7 @@ pub struct Evaluation {
     pub issues: Vec<Issue>,
 }
 
-// ---------- 誤りと警告 ----------
+// ---------- Errors and warnings ----------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -445,25 +445,25 @@ impl Issue {
     pub fn line(&self) -> String {
         let mut s = String::new();
         if let Some(sc) = &self.scenario { s.push_str(&format!("[{sc}] ")); }
-        if let Some(t) = &self.task { s.push_str(&format!("{t}：")); }
+        if let Some(t) = &self.task { s.push_str(&format!("{t}: ")); }
         s.push_str(&self.message);
         s
     }
 }
 
-/// 案・稼働率・見積もりの組みの名前（"plan4|1|e"）
+/// Name of a scenario × utilization × estimate run ("plan4|1|e")
 pub fn run_key(scenario: &str, rate: f64, est: EstKind) -> String {
     format!("{scenario}|{}|{}", fmt_num(rate), est.code())
 }
 
-/// 1.0 → "1"、0.8 → "0.8"（Python の :g と同じ見た目）
+/// 1.0 → "1", 0.8 → "0.8" (like Python's :g)
 pub fn fmt_num(x: f64) -> String {
     if x.fract() == 0.0 { format!("{}", x as i64) } else { format!("{}", (x * 1e6).round() / 1e6) }
 }
 
-// ---------- 編集（PlanEditingManager → PlanAccess） ----------
+// ---------- Edits (PlanEditingManager → PlanAccess) ----------
 
-/// エピックの設定（日程の条件）
+/// Epic settings (scheduling conditions)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields))]
@@ -479,7 +479,7 @@ pub struct EpicSettings {
     pub default_owner: Option<Option<String>>,
 }
 
-/// 1 つの編集。scenario が Some なら、その案の差分として書く（基の作業は変えない）
+/// One edit. With scenario = Some, it is written as that scenario's difference (the base tasks stay)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields))]
@@ -496,7 +496,7 @@ pub enum EditOp {
     CloneScenario { from: Option<String>, key: String, name: String },
     SetScenario { key: String, name: Option<String>, note: Option<String> },
     DeleteScenario { key: String },
-    /// target は作業かストーリーの key
+    /// target is a task or story key
     AddComment { target: String, text: String },
     DeleteComment { id: i64 },
 }
@@ -524,7 +524,7 @@ pub struct HistoryEntry {
     pub payload: String,
 }
 
-/// 画面（web/src）の型を書き出す：cargo test -p plan-contracts --features ts
+/// Export the types for the UI (web/src): cargo test -p plan-contracts --features ts
 #[cfg(all(test, feature = "ts"))]
 mod ts_export {
     use super::*;
@@ -532,7 +532,7 @@ mod ts_export {
     #[test]
     fn export_ts() {
         let cfg = Config::new().with_large_int("number");
-        let mut out = String::from("// 作ったもの：cargo test -p plan-contracts --features ts（plan-contracts の Rust の型から）。手で直さない\n\n");
+        let mut out = String::from("// Generated by cargo test -p plan-contracts --features ts from the Rust types in plan-contracts. Do not edit\n\n");
         for d in [Estimate::decl(&cfg), EstKind::decl(&cfg), CalendarSpec::decl(&cfg), Colors::decl(&cfg), Person::decl(&cfg), TaskSpec::decl(&cfg), TaskPatch::decl(&cfg), Story::decl(&cfg), Comment::decl(&cfg), ScenarioSpec::decl(&cfg), Plan::decl(&cfg), BusinessCalendar::decl(&cfg), Kind::decl(&cfg), Scenario::decl(&cfg), Task::decl(&cfg), Change::decl(&cfg), Schedule::decl(&cfg), FloatColor::decl(&cfg), Risk::decl(&cfg), Assessment::decl(&cfg), TaskView::decl(&cfg), RunResult::decl(&cfg), ScenarioInfo::decl(&cfg), Evaluation::decl(&cfg), Level::decl(&cfg), Issue::decl(&cfg), EpicSettings::decl(&cfg), EditOp::decl(&cfg), EpicSummary::decl(&cfg), HistoryEntry::decl(&cfg)] { out.push_str(&d.replace("type ", "declare type ")); out.push_str("\n\n"); }
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/src/contracts.d.ts");
         std::fs::write(path, out).unwrap();

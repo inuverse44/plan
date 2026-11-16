@@ -1,5 +1,5 @@
-//! PlanAccess：エピックの計画を読む・直す・変更を記録する。
-//! 実装は SqlitePlans（本物、sqlite.rs）・TomlFile（取り込みと書き出し）・TomlText／JsonPlan（ブラウザの中、読むだけ）
+//! PlanAccess: read and edit an epic's plan, and record the changes.
+//! Implementations: SqlitePlans and FirestorePlans (stores), HttpPlans (a server), TomlFile (import and export), TomlText / JsonPlan (in the browser, read only)
 use chrono::NaiveDate;
 use plan_contracts::*;
 use std::collections::BTreeMap;
@@ -9,25 +9,25 @@ pub type Validate<'a> = &'a dyn Fn(&Plan) -> Vec<Issue>;
 
 pub trait PlanAccess {
     fn read_plan(&self, epic: &str) -> Result<Plan, Vec<Issue>>;
-    fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> { Err(vec![Issue::error("一覧は持たない")]) }
-    /// 編集をまとめて当てる。当てた後の計画を validate に渡し、誤りがあれば何も書かない
-    fn apply(&self, _epic: &str, _actor: &str, _ops: &[EditOp], _validate: Validate) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("ここには書けない")]) }
-    fn create_epic(&self, _key: &str, _name: &str, _start: NaiveDate, _actor: &str) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("ここには書けない")]) }
-    fn delete_epic(&self, _key: &str, _actor: &str) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("ここには書けない")]) }
-    /// 計画をまるごと入れる（同じ key のエピックは置き換える）
-    fn import(&self, _plan: &Plan, _actor: &str) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("ここには書けない")]) }
+    fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> { Err(vec![Issue::error("this store has no list of epics")]) }
+    /// Apply a batch of edits. The result goes through validate; on any error nothing is written
+    fn apply(&self, _epic: &str, _actor: &str, _ops: &[EditOp], _validate: Validate) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("this store is read only")]) }
+    fn create_epic(&self, _key: &str, _name: &str, _start: NaiveDate, _actor: &str) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("this store is read only")]) }
+    fn delete_epic(&self, _key: &str, _actor: &str) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("this store is read only")]) }
+    /// Store a whole plan (replacing an epic with the same key)
+    fn import(&self, _plan: &Plan, _actor: &str) -> Result<(), Vec<Issue>> { Err(vec![Issue::error("this store is read only")]) }
     fn history(&self, _epic: Option<&str>, _limit: usize) -> Result<Vec<HistoryEntry>, Vec<Issue>> { Ok(vec![]) }
-    /// 変わったら増える数（画面が読み直すかを決める）
+    /// A number that grows on every change (the UI reloads when it changes)
     fn version(&self) -> i64 { 0 }
 }
 
-/// 文字列で受け取った TOML
+/// TOML received as a string
 pub struct TomlText(pub String);
 impl PlanAccess for TomlText {
     fn read_plan(&self, _: &str) -> Result<Plan, Vec<Issue>> { parse(&self.0) }
 }
 
-/// サーバーから受け取ったエピック 1 つ分（JSON）。ブラウザの中で使う
+/// One epic received from the server (JSON). Used in the browser
 pub struct JsonPlan(pub Plan);
 impl PlanAccess for JsonPlan {
     fn read_plan(&self, _: &str) -> Result<Plan, Vec<Issue>> { Ok(self.0.clone()) }
@@ -39,14 +39,14 @@ pub struct TomlFile(pub std::path::PathBuf);
 #[cfg(not(target_arch = "wasm32"))]
 impl PlanAccess for TomlFile {
     fn read_plan(&self, _: &str) -> Result<Plan, Vec<Issue>> {
-        let text = std::fs::read_to_string(&self.0).map_err(|e| vec![Issue::error(format!("{} を読めない：{e}", self.0.display()))])?;
+        let text = std::fs::read_to_string(&self.0).map_err(|e| vec![Issue::error(format!("cannot read {}: {e}", self.0.display()))])?;
         let mut p = parse(&text)?;
         if p.key.is_empty() { p.key = self.0.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(); }
         Ok(p)
     }
 }
 
-// ---------- 編集を計画に当てる（保存の形によらない） ----------
+// ---------- Apply edits to a plan (independent of the store) ----------
 
 pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
     let has = |p: &Plan, k: &str| p.tasks.iter().any(|t| t.id == k);
@@ -59,11 +59,11 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             if let Some(v) = &s.deadline { plan.deadline = *v; }
             if let Some(v) = &s.deadline_task { plan.deadline_task = v.clone(); }
             if let Some(v) = &s.deadline_label { plan.deadline_label = v.clone(); }
-            if let Some(v) = &s.rates { if v.is_empty() { return Err(Issue::error("稼働率が空")); } plan.rates = v.clone(); }
+            if let Some(v) = &s.rates { if v.is_empty() { return Err(Issue::error("rates is empty")); } plan.rates = v.clone(); }
             if let Some(v) = &s.default_owner { plan.default_owner = v.clone(); }
         }
         EditOp::SetStory { story } => {
-            if story.key.is_empty() { return Err(Issue::error("ストーリーの key が空")); }
+            if story.key.is_empty() { return Err(Issue::error("story key is empty")); }
             match plan.stories.iter_mut().find(|s| s.key == story.key) { Some(s) => *s = story.clone(), None => plan.stories.push(story.clone()) }
         }
         EditOp::DeleteStory { key } => {
@@ -72,19 +72,19 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             for t in plan.tasks.iter_mut().filter(|t| &t.story == key) { t.story.clear(); }
         }
         EditOp::AddTask { task } => {
-            if task.id.is_empty() { return Err(Issue::error("作業の key が空")); }
-            if has(plan, &task.id) { return Err(Issue::error(format!("作業 {} は既にある", task.id))); }
+            if task.id.is_empty() { return Err(Issue::error("task key is empty")); }
+            if has(plan, &task.id) { return Err(Issue::error(format!("task {} already exists", task.id))); }
             let mut t = task.clone();
             if t.name.is_empty() { t.name = t.id.clone(); }
             if t.short.is_empty() { t.short = t.name.clone(); }
             plan.tasks.push(t);
         }
         EditOp::SetTask { key, patch, scenario: None } => {
-            let t = plan.tasks.iter_mut().find(|t| &t.id == key).ok_or_else(|| Issue::error(format!("作業 {key} が無い")))?;
+            let t = plan.tasks.iter_mut().find(|t| &t.id == key).ok_or_else(|| Issue::error(format!("no task {key}")))?;
             plan_patch(t, patch);
         }
         EditOp::SetTask { key, patch, scenario: Some(sk) } => {
-            let sc = plan.scenarios.iter_mut().find(|s| &s.key == sk).ok_or_else(|| Issue::error(format!("案 {sk} が無い")))?;
+            let sc = plan.scenarios.iter_mut().find(|s| &s.key == sk).ok_or_else(|| Issue::error(format!("no scenario {sk}")))?;
             if let Some(a) = sc.add.iter_mut().find(|t| &t.id == key) { plan_patch(a, patch); return Ok(()); }
             match sc.set.iter_mut().find(|(k, _)| k == key) {
                 Some((_, p)) => merge_patch(p, patch),
@@ -92,7 +92,7 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             }
         }
         EditOp::DeleteTask { key } => {
-            if !has(plan, key) { return Err(Issue::error(format!("作業 {key} が無い"))); }
+            if !has(plan, key) { return Err(Issue::error(format!("no task {key}"))); }
             plan.tasks.retain(|t| &t.id != key);
             plan.comments.retain(|c| &c.target != key);
             for t in plan.tasks.iter_mut() { t.after.retain(|p| p != key); }
@@ -103,19 +103,19 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             }
         }
         EditOp::Link { task, pred } => {
-            if task == pred { return Err(Issue::error("自分自身にはつなげない")); }
-            if !has(plan, pred) { return Err(Issue::error(format!("作業 {pred} が無い"))); }
-            let t = plan.tasks.iter_mut().find(|t| &t.id == task).ok_or_else(|| Issue::error(format!("作業 {task} が無い")))?;
+            if task == pred { return Err(Issue::error("a task cannot depend on itself")); }
+            if !has(plan, pred) { return Err(Issue::error(format!("no task {pred}"))); }
+            let t = plan.tasks.iter_mut().find(|t| &t.id == task).ok_or_else(|| Issue::error(format!("no task {task}")))?;
             if !t.after.contains(pred) { t.after.push(pred.clone()); }
         }
         EditOp::Unlink { task, pred } => {
-            let t = plan.tasks.iter_mut().find(|t| &t.id == task).ok_or_else(|| Issue::error(format!("作業 {task} が無い")))?;
+            let t = plan.tasks.iter_mut().find(|t| &t.id == task).ok_or_else(|| Issue::error(format!("no task {task}")))?;
             t.after.retain(|p| p != pred);
         }
         EditOp::CloneScenario { from, key, name } => {
-            if key.is_empty() || plan.scenarios.iter().any(|s| &s.key == key) { return Err(Issue::error(format!("案 {key} は使えない（空か既にある）"))); }
+            if key.is_empty() || plan.scenarios.iter().any(|s| &s.key == key) { return Err(Issue::error(format!("scenario key {key} is empty or already used"))); }
             let mut s = match from {
-                Some(f) => plan.scenarios.iter().find(|s| &s.key == f).cloned().ok_or_else(|| Issue::error(format!("案 {f} が無い")))?,
+                Some(f) => plan.scenarios.iter().find(|s| &s.key == f).cloned().ok_or_else(|| Issue::error(format!("no scenario {f}")))?,
                 None => ScenarioSpec::default(),
             };
             s.key = key.clone();
@@ -123,7 +123,7 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             plan.scenarios.push(s);
         }
         EditOp::SetScenario { key, name, note } => {
-            let sc = plan.scenarios.iter_mut().find(|s| &s.key == key).ok_or_else(|| Issue::error(format!("案 {key} が無い")))?;
+            let sc = plan.scenarios.iter_mut().find(|s| &s.key == key).ok_or_else(|| Issue::error(format!("no scenario {key}")))?;
             if let Some(n) = name { sc.name = n.clone(); }
             if let Some(n) = note { sc.note = n.clone(); }
         }
@@ -132,13 +132,13 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
         }
         EditOp::AddComment { target, text } => {
             let text = text.trim();
-            if text.is_empty() { return Err(Issue::error("コメントが空")); }
-            if !has(plan, target) && !plan.stories.iter().any(|s| &s.key == target) { return Err(Issue::error(format!("作業・ストーリー {target} が無い"))); }
+            if text.is_empty() { return Err(Issue::error("comment is empty")); }
+            if !has(plan, target) && !plan.stories.iter().any(|s| &s.key == target) { return Err(Issue::error(format!("no task or story {target}"))); }
             let id = plan.comments.iter().map(|c| c.id).max().unwrap_or(0) + 1;
             plan.comments.push(Comment { id, target: target.clone(), text: text.to_string(), ..Default::default() });
         }
         EditOp::DeleteComment { id } => {
-            if !plan.comments.iter().any(|c| c.id == *id) { return Err(Issue::error(format!("コメント {id} が無い"))); }
+            if !plan.comments.iter().any(|c| c.id == *id) { return Err(Issue::error(format!("no comment {id}"))); }
             plan.comments.retain(|c| c.id != *id);
         }
     }
@@ -170,7 +170,7 @@ fn merge_patch(a: &mut TaskPatch, b: &TaskPatch) {
     for c in &b.clear { if !a.clear.contains(c) { a.clear.push(c.clone()); } }
 }
 
-// ---------- 書き出す（TOML。AI と人が読む形） ----------
+// ---------- Export (TOML, readable by people and AI) ----------
 
 fn q(s: &str) -> String { format!("{:?}", s) }
 fn est(e: &Estimate) -> String {
@@ -221,7 +221,7 @@ fn patch_lines(p: &TaskPatch, out: &mut String) {
     if !p.clear.is_empty() { out.push_str(&format!("clear = {}\n", qlist(&p.clear))); }
 }
 
-/// 計画を TOML にする（plan dump。取り込み直せる形）
+/// A plan as TOML (plan dump; can be imported again)
 pub fn to_toml(p: &Plan) -> String {
     let mut o = String::new();
     o.push_str(&format!("key = {}\ntitle = {}\n", q(&p.key), q(&p.title)));
@@ -259,15 +259,15 @@ pub fn to_toml(p: &Plan) -> String {
     o
 }
 
-// ---------- 読む ----------
+// ---------- Read ----------
 
 fn err(m: impl Into<String>) -> Issue { Issue::error(m) }
 
 fn date(v: &Value, where_: &str) -> Result<NaiveDate, Issue> {
     match v {
-        Value::Datetime(d) => d.date.map(|d| NaiveDate::from_ymd_opt(d.year as i32, d.month as u32, d.day as u32).unwrap()).ok_or_else(|| err(format!("{where_}：日付が無い"))),
-        Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| err(format!("{where_}：日付は YYYY-MM-DD で書く（{s:?}）"))),
-        _ => Err(err(format!("{where_}：日付は YYYY-MM-DD で書く"))),
+        Value::Datetime(d) => d.date.map(|d| NaiveDate::from_ymd_opt(d.year as i32, d.month as u32, d.day as u32).unwrap()).ok_or_else(|| err(format!("{where_}: no date"))),
+        Value::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| err(format!("{where_}: write dates as YYYY-MM-DD ({s:?})"))),
+        _ => Err(err(format!("{where_}: write dates as YYYY-MM-DD"))),
     }
 }
 
@@ -287,7 +287,7 @@ fn estimate(v: &Value, where_: &str) -> Result<Estimate, Issue> {
         let xs: Vec<f64> = a.iter().filter_map(num).collect();
         if xs.len() == 3 && a.len() == 3 { return Ok(Estimate::Three(xs[0], xs[1], xs[2])); }
     }
-    Err(err(format!("{where_}：工数・待ちは数か [楽観, 最も起こりうる, 悲観]")))
+    Err(err(format!("{where_}: effort and wait are a number or [optimistic, most likely, pessimistic]")))
 }
 
 fn str_of(t: &Table, k: &str) -> String { t.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string() }
@@ -353,13 +353,13 @@ const TOP_KEYS: [&str; 19] = ["key", "stories", "title", "description", "start",
 fn one<T>(r: Result<T, Issue>) -> Result<T, Vec<Issue>> { r.map_err(|e| vec![e]) }
 
 pub fn parse(text: &str) -> Result<Plan, Vec<Issue>> {
-    let raw: Table = text.parse().map_err(|e: toml::de::Error| vec![err(format!("TOML の書き方の誤り：{}", e.message()))])?;
+    let raw: Table = text.parse().map_err(|e: toml::de::Error| vec![err(format!("invalid TOML: {}", e.message()))])?;
     let empty = Table::new();
     let cal = raw.get("calendar").and_then(|v| v.as_table()).unwrap_or(&empty);
     let mut freeze = Vec::new();
     for p in cal.get("freeze").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
-        let a = p.as_array().ok_or_else(|| vec![err("calendar.freeze：[[\"開始\", \"終わり\"], …] で書く")])?;
-        if a.len() != 2 { return Err(vec![err("calendar.freeze：1 つの期間は [開始, 終わり]")]); }
+        let a = p.as_array().ok_or_else(|| vec![err("calendar.freeze: write [[\"start\", \"end\"], …]")])?;
+        if a.len() != 2 { return Err(vec![err("calendar.freeze: each period is [start, end]")]); }
         freeze.push((one(date(&a[0], "calendar.freeze"))?, one(date(&a[1], "calendar.freeze"))?));
     }
     let off = cal.get("off").and_then(|v| v.as_array()).map(|a| a.iter().map(|v| date(v, "calendar.off")).collect::<Result<Vec<_>, _>>()).transpose().map_err(|e| vec![e])?.unwrap_or_default();
@@ -378,7 +378,7 @@ pub fn parse(text: &str) -> Result<Plan, Vec<Issue>> {
     }
     let mut tasks = Vec::new();
     for v in raw.get("tasks").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
-        let tt = v.as_table().ok_or_else(|| vec![err("tasks の要素が表でない")])?;
+        let tt = v.as_table().ok_or_else(|| vec![err("each entry of tasks must be a table")])?;
         tasks.push(one(task(tt, "tasks"))?);
     }
     let mut scenarios = Vec::new();
@@ -404,8 +404,8 @@ pub fn parse(text: &str) -> Result<Plan, Vec<Issue>> {
         }
     }
     let ests = raw.get("estimates").map(list_of).unwrap_or_else(|| vec!["e".into(), "m".into(), "p".into()]);
-    let estimates = ests.iter().map(|e| EstKind::parse(e).ok_or_else(|| vec![err(format!("estimates：o・m・e・p のどれか（{e:?}）"))])).collect::<Result<Vec<_>, _>>()?;
-    let start = match raw.get("start") { Some(v) => one(date(v, "start"))?, None => return Err(vec![err("start（計画の開始日）が無い")]) };
+    let estimates = ests.iter().map(|e| EstKind::parse(e).ok_or_else(|| vec![err(format!("estimates: one of o, m, e, p ({e:?})"))])).collect::<Result<Vec<_>, _>>()?;
+    let start = match raw.get("start") { Some(v) => one(date(v, "start"))?, None => return Err(vec![err("start (the plan's start date) is missing")]) };
     let s = |k: &str| raw.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
     let stories = raw.get("stories").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_table()).map(|t| Story {
         key: str_of(t, "key"), name: str_of(t, "name"), purpose: str_of(t, "purpose"), dod: str_of(t, "dod"),
@@ -413,7 +413,7 @@ pub fn parse(text: &str) -> Result<Plan, Vec<Issue>> {
     Ok(Plan {
         key: s("key").unwrap_or_default(),
         stories,
-        title: s("title").unwrap_or_else(|| "日程".into()),
+        title: s("title").unwrap_or_else(|| "Schedule".into()),
         description: s("description").unwrap_or_default(),
         start,
         start_pm: raw.get("start_half").and_then(|v| v.as_str()) == Some("pm"),
