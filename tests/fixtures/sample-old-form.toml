@@ -1,0 +1,201 @@
+# The sample in the old form (calendar.freeze and prod = true), kept to test that old plans still read the same
+# A fictional plan: move nightly batch jobs off a legacy server onto a cloud VM, then shut the old server down.
+# Also used by the test suite (crates/plan-manager/tests/parity.rs): the expected schedule is tests/fixtures/sample.expected.json.
+title = "Legacy batch server migration"
+description = "Can we cut over before the year-end release freeze?"
+start = "2026-11-16"
+start_half = "pm"
+deadline = "2026-12-22"
+deadline_task = "CUT"
+deadline_label = "Cutover"
+rates = [1.0, 0.8, 0.6]
+estimates = ["e", "m", "p"]
+default_owner = "alice"
+
+[calendar]
+holidays = "JP"
+year_end = true
+freeze = [["2026-11-15", "2026-11-29"], ["2026-12-23", "2027-01-03"]]
+
+[colors]
+red = 2
+yellow = 5
+
+[people.alice]
+leave = []
+
+[[tasks]]
+id = "SPEC"
+name = "Size the VM and estimate the monthly cost"
+short = "VM sizing"
+ticket = "DEMO-11"
+deliverable = "Sizing note"
+effort = [0.5, 1.0, 1.5]
+
+[[tasks]]
+id = "DS"
+name = "List every data source the batch jobs read"
+short = "Data sources"
+ticket = "DEMO-12"
+deliverable = "Data source list"
+effort = [0.5, 1.5, 3.5]
+
+[[tasks]]
+id = "DSM"
+name = "Set up a 30-minute meeting with the data owners (waiting)"
+short = "Owner meeting"
+ticket = "DEMO-12"
+deliverable = "Agreed scope"
+wait = 2
+after = ["DS"]
+
+[[tasks]]
+id = "DSW"
+name = "Prepare the meeting and record what will move"
+short = "Scope decided"
+ticket = "DEMO-12"
+deliverable = "Decision note"
+effort = 0.5
+after = ["DSM"]
+
+[[tasks]]
+id = "API"
+name = "Write the input specification for each job"
+short = "Input spec"
+ticket = "DEMO-13"
+deliverable = "Specification"
+effort = [1.5, 3.0, 5.0]
+
+[[tasks]]
+id = "V06"
+name = "Write the migration plan"
+short = "Migration plan"
+ticket = "DEMO-14"
+deliverable = "Migration plan"
+effort = [1.5, 2.5, 5.0]
+after = ["DSW", "SPEC", "API"]
+
+[[tasks]]
+id = "V06R"
+name = "Plan review (waiting)"
+short = "Review"
+ticket = "DEMO-14"
+deliverable = "Review comments"
+wait = 2
+after = ["V06"]
+
+[[tasks]]
+id = "CU"
+name = "Update the team task board"
+short = "Task board"
+ticket = "DEMO-15"
+deliverable = "Updated tasks"
+effort = [0.5, 0.5, 1.0]
+after = ["V06R"]
+
+[[tasks]]
+id = "TF"
+name = "Build the platform: infrastructure as code, container, network checks"
+short = "Platform"
+ticket = "DEMO-16"
+deliverable = "Infrastructure pull request"
+effort = [3.0, 5.0, 10.0]
+after = ["V06R"]
+
+[[tasks]]
+id = "TFA"
+name = "Production review and apply (waiting)"
+short = "Apply"
+ticket = "DEMO-16"
+deliverable = "Apply log"
+wait = 2
+after = ["TF", "V06R"]
+prod = true
+
+[[tasks]]
+id = "RUN"
+name = "Run old and new side by side (waiting)"
+short = "Parallel run"
+deliverable = "Daily outputs"
+wait = 3
+after = ["TFA"]
+
+[[tasks]]
+id = "CMP"
+name = "Compare old and new outputs"
+short = "Compare"
+deliverable = "Comparison for 3 days"
+effort = 0.5
+after = ["RUN"]
+
+[[tasks]]
+id = "CUT"
+name = "Cut over: the new VM writes to production, remove the old cron jobs"
+short = "Cutover"
+deliverable = "Cutover log"
+effort = 0.5
+after = ["CMP"]
+prod = true
+
+[[tasks]]
+id = "WATCH"
+name = "Watch for a few days that nothing runs on the old server (waiting)"
+short = "Watch"
+deliverable = "Check log"
+wait = 2
+after = ["CUT"]
+
+[[tasks]]
+id = "STOP"
+name = "Shut down the old server"
+short = "Shut down"
+deliverable = "Shutdown log"
+effort = 0.5
+after = ["WATCH"]
+
+[scenarios.plan1]
+name = "Plan 1: in order"
+note = "Write the input spec before the migration plan"
+
+[scenarios.plan3]
+name = "Plan 3: platform first"
+note = "Start the platform before the review; only the apply waits for it. Input spec after cutover"
+[scenarios.plan3.set.API]
+after = ["CUT"]
+[scenarios.plan3.set.V06]
+after = ["DSW", "SPEC"]
+[scenarios.plan3.set.TF]
+after = ["SPEC"]
+
+[scenarios.plan4]
+name = "Plan 4: AI drafts the spec, network checks early"
+note = "An AI drafts the spec in parallel (no one's hands), a person reviews it in half a day. Network checks happen while waiting for the meeting"
+[scenarios.plan4.set.API]
+name = "AI drafts the input specification (no one's hands)"
+short = "Spec by AI"
+deliverable = "Spec draft"
+effort = 0   # drop the base effort and make it a wait
+wait = [1.5, 3.0, 5.0]
+[scenarios.plan4.set.V06]
+after = ["DSW", "SPEC"]
+[scenarios.plan4.set.TF]
+name = "Build the platform: infrastructure as code, container"
+deliverable = "Infrastructure pull request"
+effort = [2.5, 4.5, 9.5]
+after = ["TF0", "V06"]
+[[scenarios.plan4.add]]
+id = "APIR"
+name = "Review the drafted spec"
+short = "Spec review"
+ticket = "DEMO-13"
+deliverable = "Specification"
+effort = 0.5
+after = ["API"]
+[[scenarios.plan4.add]]
+id = "TF0"
+name = "First platform step: check the VM can reach the databases"
+short = "Network checks"
+ticket = "DEMO-16"
+deliverable = "Connectivity log"
+effort = 0.5
+after = ["SPEC"]

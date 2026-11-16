@@ -42,7 +42,7 @@ pub fn resolve(plan: &Plan, tasks: &[TaskSpec], est: EstKind, rate: f64) -> Vec<
             Kind::Wait => ceil_slots(val * 2.0),
             _ => 0,
         };
-        Task { id: t.id.clone(), kind, dur, val, owners, after: t.after.clone(), prod: t.prod, not_before: t.not_before, fixed: t.fixed }
+        Task { id: t.id.clone(), kind, dur, val, owners, after: t.after.clone(), needs: t.needs.clone(), not_before: t.not_before, fixed: t.fixed }
     }).collect()
 }
 

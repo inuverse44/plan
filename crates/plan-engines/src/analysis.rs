@@ -99,6 +99,7 @@ pub fn inspect(plan: &Plan, scenarios: &[Scenario]) -> Vec<Issue> {
                 if t.deliverable.is_empty() { out.push(Issue::warning("no deliverable").at(sk, ts)); }
                 let owners: Vec<String> = t.owners.clone().unwrap_or_else(|| plan.default_owner.clone().into_iter().collect());
                 if owners.is_empty() { out.push(Issue::warning("no owner (and no default_owner)").at(sk, ts)); }
+                for n in &t.needs { if !plan.resources.contains_key(n) { out.push(Issue::warning(format!("needs {n}, which is not in resources (it never blocks)")).at(sk, ts)); } }
                 if !plan.people.is_empty() { for o in &owners { if !plan.people.contains_key(o) { out.push(Issue::warning(format!("owner {o} is not in people")).at(sk, ts)); } } }
             }
         }

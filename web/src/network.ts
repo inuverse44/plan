@@ -123,10 +123,10 @@ P.views.net = function (el: HTMLElement, ctx: ViewCtx) {
   for (const n of real) { const p = Pn[n], big = n === 'S' || n === 'F'; s += `<circle cx="${p.x}" cy="${p.y}" r="${big ? 7 : 4}" fill="${big ? css('--fg') : css('--surface')}" stroke="${css('--fg')}" stroke-width="1.5"/>` }
   for (const l of labels) {
     const text = l.t.short || l.t.name;
-    const w = [...text].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 12 : 7), 0) + (l.t.prod ? 18 : 8);
+    const w = [...text].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 12 : 7), 0) + (l.t.needs.length ? 18 : 8);
     s += `<g opacity="${l.op}" data-id="${l.id}" style="cursor:pointer"><rect x="${l.x - w / 2}" y="${l.y - 20}" width="${w}" height="17" rx="4" fill="${css('--surface')}" opacity=".92"/>` +
-      (l.t.prod ? P.PROD(l.x - w / 2 + 9, l.y - 11.5, 9) : '') +
-      `<text x="${l.x + (l.t.prod ? 6 : 0)}" y="${l.y - 7.5}" font-size="12" text-anchor="middle" font-weight="${l.crit ? 600 : 400}">${esc(text)}</text><title>${esc(l.t.name)}</title></g>`;
+      P.NEEDS(l.t.needs, l.x - w / 2 + 9, l.y - 11.5, 9) +
+      `<text x="${l.x + (l.t.needs.length ? 6 : 0)}" y="${l.y - 7.5}" font-size="12" text-anchor="middle" font-weight="${l.crit ? 600 : 400}">${esc(text)}</text><title>${esc(l.t.name)}</title></g>`;
   }
   el.innerHTML = `<div style="display:flex;justify-content:center">${s}</svg></div>` + P.LEGEND();
   const svg = el.querySelector<SVGSVGElement>('#nsvg')!;

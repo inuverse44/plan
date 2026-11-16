@@ -123,8 +123,8 @@ Moves are re-planned at once; the original position stays as a dashed outline. *
 | Estimates | `[optimistic, most likely, pessimistic]`; expected = PERT (o + 4m + p) / 6, rounded to 0.5 |
 | People | One task at a time per person. Two owners progress only when both are free. Days off are skipped |
 | Order | Least float first (latest start of the resource-free critical-path pass), back-filling gaps |
-| Release freeze | Tasks with `prod = true` are placed outside `calendar.freeze` |
-| Float | The largest delay of one task that does not move the end, owners' availability included. Free float: without moving the next task |
+| Resources | Things a task needs besides people (`needs`): an environment, a room, an approval board. A task is not placed in the off periods of what it needs and does not straddle them (a release freeze is `resources.prod`). Unlike people, any number of tasks can use a resource at once |
+| Float | The largest delay of one task, from where it is placed, that does not move the end (owners' availability and resources included). Free float: without moving the next task |
 | Colors | Float 0 = critical (orange); ≤ `colors.red` days low, ≤ `colors.yellow` mid, above high (blue, dark to light) |
 | Risk | Criticality (weights 4·3·2·1), Fibonacci, activity (1 − ΣF / (M·N)). Healthy between 0.3 and 0.75 |
 | Holidays | Computed from the rules of the Japanese holiday law (equinox approximation valid for 1980–2099) |
@@ -142,13 +142,16 @@ The Help page in the UI shows the formulas with references.
 | | `deadline`, `deadline_task`, `deadline_label` | deadline and the task compared with it |
 | | `rates`, `estimates`, `round` | utilizations, estimate kinds (o, m, e, p), rounding |
 | | `default_owner` | owner of tasks without one |
-| `[calendar]` | `holidays`, `year_end`, `off`, `freeze` | calendar |
+| `[calendar]` | `holidays`, `year_end`, `off` | calendar |
 | `[colors]` | `red`, `yellow` | float thresholds (days) |
 | `[people.NAME]` | `leave`, `rate` | days off, a fixed utilization for this person |
+| `[resources.NAME]` | `label`, `off` | what the off periods are called, `[[first, last], …]` when it cannot be used |
 | `[[tasks]]` | `id`, `name`, `short`, `ticket`, `deliverable`, `group`, `note` | identity and labels |
 | | `effort` or `wait` | person-days or business days; a number or a triple. Neither = milestone |
 | | `owner`, `after` | owner(s), predecessors |
-| | `prod`, `not_before`, `fixed`, `done`, `actual_start`, `actual_finish` | avoid freezes, earliest start, fixed date, done, actual dates (drawn as grey bars) |
+| | `needs`, `not_before`, `fixed`, `done`, `actual_start`, `actual_finish` | resources it needs, earliest start, fixed date, done, actual dates (drawn as grey bars) |
+
+Older plans with `prod = true` and `calendar.freeze` still read: they become `needs = ["prod"]` and `[resources.prod]` (label "Release freeze"), and are written back in the new form.
 | `[scenarios.KEY]` | `name`, `note`, `drop`, `set.ID`, `add` | alternative plans as differences from the base |
 
 ## Deploy to Cloud Run

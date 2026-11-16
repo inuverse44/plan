@@ -493,6 +493,7 @@ dependencies = [
  "plan-access",
  "plan-contracts",
  "plan-engines",
+ "rusqlite",
  "serde_json",
 ]
 

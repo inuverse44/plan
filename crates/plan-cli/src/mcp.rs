@@ -21,7 +21,8 @@ Edits:
   {"op":"clone_scenario","from":"plan1","key":"plan2","name":"Plan 2"}   {"op":"set_scenario","key":"plan2","name":"…"}   {"op":"delete_scenario","key":"plan2"}
   {"op":"set_epic","settings":{"deadline":"2026-12-22","deadline_task":"CUT"}}
   {"op":"add_comment","target":"T1","text":"Ticket: https://example.com/issues/42"}   {"op":"delete_comment","id":3}
-Task fields: id name short story ticket deliverable note owners after prod done not_before fixed actual_start actual_finish (dates YYYY-MM-DD), and effort (person-days) or wait (business days): a number or [optimistic, most likely, pessimistic].
+Task fields: id name short story ticket deliverable note owners after needs done not_before fixed actual_start actual_finish (dates YYYY-MM-DD), and effort (person-days) or wait (business days): a number or [optimistic, most likely, pessimistic].
+needs: resources the task needs besides people (keys of the plan's resources, e.g. ["prod"]); the task is not placed in their off periods (see dump: resources).
 set_task: "scenario" changes only that scenario (null = the base, every scenario). "patch":{"clear":["not_before","effort","wait","owners","fixed"]} removes fields."#;
 
 fn epic_prop() -> Value { json!({ "type": "string", "description": "the epic key (from epics), or a path to a .toml plan file" }) }

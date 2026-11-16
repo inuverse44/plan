@@ -8,7 +8,7 @@
 //!   machine every command accepts --json and returns {"ok":true,"data":…} or {"ok":false,"issues":[…]}
 //!   ui      plan serve [--port N] [--no-open] | export E [out.html]
 //!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log apply) for AI assistants
-//!   k=v     name short story ticket deliverable note owner=a,b after=a,b effort=1 or 1,2,4 wait=2 prod=true not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
+//!   k=v     name short story ticket deliverable note owner=a,b after=a,b needs=prod,db effort=1 or 1,2,4 wait=2 not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
 //!   E may be a path to a .toml file: the file is read directly, without the DB
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local
 //!           plan push [E]  copy epics from the local SQLite to the server (all if E is omitted)
@@ -220,7 +220,7 @@ fn show(ev: &Evaluation, r: &RunResult) {
     let mut ts: Vec<&TaskView> = r.tasks.iter().collect();
     ts.sort_by_key(|t| t.es);
     for t in ts {
-        println!("| {} | {}{} | {} | {} | {} | {} | {} | {} | {} | {} | {} |", t.id, if t.prod { "◆ " } else { "" }, t.name, t.ticket, t.owners.join(", "),
+        println!("| {} | {}{} | {} | {} | {} | {} | {} | {} | {} | {} | {} |", t.id, if t.needs.is_empty() { "" } else { "◆ " }, t.name, t.ticket, t.owners.join(", "),
             if t.kind == Kind::Work { fmt_num(t.val) } else { String::new() }, if t.kind == Kind::Wait { fmt_num(t.val) } else { String::new() },
             start_label(cal, t.es), if t.ef > t.es { end_label(cal, t.ef) } else { start_label(cal, t.es) },
             t.tf.map(|x| fmt_num(x as f64 / 2.0)).unwrap_or_default(), color_name(t.color), t.why);
@@ -262,7 +262,9 @@ fn patch(kvs: &[String]) -> Result<TaskPatch, String> {
             "after" => p.after = Some(list(v)),
             "effort" => if v.is_empty() { p.clear.push("effort".into()) } else { p.effort = Some(parse_est(v)?) },
             "wait" => if v.is_empty() { p.clear.push("wait".into()) } else { p.wait = Some(parse_est(v)?) },
-            "prod" => p.prod = Some(v == "true"), "done" => p.done = Some(v == "true"),
+            "needs" => p.needs = Some(list(v)),
+            "prod" => p.prod = Some(v == "true"), // the old form of needs=prod (resolved against the task's needs)
+            "done" => p.done = Some(v == "true"),
             "not_before" => if v.is_empty() { p.clear.push("not_before".into()) } else { p.not_before = Some(date(v)?) },
             "fixed" => if v.is_empty() { p.clear.push("fixed".into()) } else { p.fixed = Some(date(v)?) },
             "actual_start" => if v.is_empty() { p.clear.push("actual_start".into()) } else { p.actual_start = Some(date(v)?) },
@@ -282,7 +284,7 @@ fn plan_engines_patch(t: &mut TaskSpec, p: &TaskPatch) {
     if let Some(v) = &p.name { t.name = v.clone(); } if let Some(v) = &p.short { t.short = v.clone(); } if let Some(v) = &p.story { t.story = v.clone(); }
     if let Some(v) = &p.ticket { t.ticket = v.clone(); } if let Some(v) = &p.deliverable { t.deliverable = v.clone(); } if let Some(v) = &p.note { t.note = v.clone(); }
     if let Some(v) = &p.group { t.group = v.clone(); } if p.owners.is_some() { t.owners = p.owners.clone(); } if let Some(v) = &p.after { t.after = v.clone(); }
-    t.effort = p.effort.clone(); t.wait = p.wait.clone(); t.prod = p.prod.unwrap_or(false); t.done = p.done.unwrap_or(false); t.not_before = p.not_before; t.fixed = p.fixed; t.actual_start = p.actual_start; t.actual_finish = p.actual_finish;
+    t.effort = p.effort.clone(); t.wait = p.wait.clone(); t.needs = p.needs.clone().unwrap_or_default(); t.prod = p.prod.unwrap_or(false); t.normalize(); t.done = p.done.unwrap_or(false); t.not_before = p.not_before; t.fixed = p.fixed; t.actual_start = p.actual_start; t.actual_finish = p.actual_finish;
 }
 
 fn edit(epic: &str, ops: Vec<EditOp>) {

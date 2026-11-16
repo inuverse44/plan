@@ -31,8 +31,7 @@ pub fn build(plan: &Plan) -> Result<Vec<Scenario>, Vec<Issue>> {
 
 fn apply(t: &mut TaskSpec, p: &TaskPatch) {
     macro_rules! set { ($($f:ident),*) => { $( if let Some(v) = &p.$f { t.$f = v.clone(); } )* } }
-    set!(story, name, short, ticket, deliverable, group, note, after);
-    if let Some(v) = &p.prod { t.prod = *v; }
+    set!(story, name, short, ticket, deliverable, group, note, after, needs);
     if let Some(v) = &p.done { t.done = *v; }
     if p.effort.is_some() { t.effort = p.effort.clone(); }
     if p.wait.is_some() { t.wait = p.wait.clone(); }

@@ -14,7 +14,6 @@ default_owner = "me"
 holidays = "JP"              # skip Japanese public holidays ("none" to keep them)
 year_end = true              # skip Dec 29 - Jan 3
 off = []                     # other days to skip
-freeze = []                  # release freezes [["2026-11-15", "2026-11-29"]]; tasks with prod = true avoid them
 
 [colors]                     # float (business days) thresholds: 0 = critical, <= red = low, <= yellow = mid, above = high
 red = 2
@@ -22,6 +21,12 @@ yellow = 5
 
 [people.me]
 leave = []                   # days off
+
+# Things tasks need besides people (an environment, a room, an approval board). A task with needs = ["prod"]
+# is not placed in prod's off periods; any number of tasks can use a resource at once
+# [resources.prod]
+# label = "Release freeze"
+# off = [["2026-11-15", "2026-11-29"]]
 
 [[tasks]]
 id = "A"

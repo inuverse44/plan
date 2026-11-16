@@ -1,4 +1,4 @@
-// Shared by both Gantt levels (stories, tasks): date scale, weekends, freezes, today, deadline
+// Shared by both Gantt levels (stories, tasks): date scale, weekends, resources' off periods, today, deadline
 function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   const { css, D, iso, mdw, S } = P;
   const { run, base } = ctx, cal = S.cal;
@@ -18,7 +18,7 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="${css('--wait')}" opacity=".25"/><line x1="0" y1="0" x2="0" y2="6" stroke="${css('--wait')}" stroke-width="3"/></pattern>
   <marker id="ga" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--muted')}"/></marker>
   <marker id="gh" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--accent')}"/></marker></defs>`;
-  for (const [a, b] of S.ev.freeze) { const x1 = Math.max(lw, xd(a)), x2 = Math.min(W, xd(b) + dw); if (x2 > x1) head += `<rect x="${x1}" y="${top - 4}" width="${x2 - x1}" height="${H - top}" fill="${css('--freeze')}"/>` }
+  for (const [n, r] of Object.entries(S.ev.resources)) for (const [a, b] of r.off) { const x1 = Math.max(lw, xd(a)), x2 = Math.min(W, xd(b) + dw); if (x2 > x1) head += `<rect x="${x1}" y="${top - 4}" width="${x2 - x1}" height="${H - top}" fill="${css('--freeze')}"><title>${P.esc(r.label || n)}: ${P.esc(n)} unavailable</title></rect>` }
   for (let i = 0; i < nd; i++) {
     const d = new Date(t0.getTime() + i * 864e5), w = d.getDay(), x = lw + i * dw;
     if (w === 0 || w === 6 || off.has(iso(d))) head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top}" fill="${css('--faint')}"/>`;
@@ -149,7 +149,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     bars += `<g data-id="${k}" opacity="${dim ? .25 : 1}">`;
     const ind = t.story && sIdx[t.story] != null ? 14 : 0;
     bars += P.ICON('task', 6 + ind, y + 9, 14) + `<text x="${26 + ind}" y="${y + 21}" font-size="13" font-weight="${crit ? 600 : 400}" style="cursor:pointer">${esc((t.short || t.name).slice(0, 14))}<title>${esc(tip)}</title></text>`;
-    if (t.prod) bars += P.PROD(lw - 12, y + 16);
+    bars += P.NEEDS(t.needs, lw - 12, y + 16);
     if (b.es !== t.es || b.ef !== t.ef) bars += `<rect x="${xs(b.es)}" y="${y + 7}" width="${Math.max(3, xe(b.ef) - xs(b.es))}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
     if (t.kind === 'milestone') {
       const cx = xs(t.es); bars += `<path class="bar" data-id="${k}" d="M${cx} ${y + 6}l10 10l-10 10l-10-10z" fill="${css(crit ? '--f-crit' : '--muted')}"><title>${esc(tip)}</title></path>`;

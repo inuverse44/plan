@@ -8,7 +8,10 @@ default_owner = "me"
 [calendar]
 holidays = "none"
 year_end = false
-freeze = [["2026-12-22", "2026-12-24"]]
+
+[resources.prod]
+label = "Release freeze"
+off = [["2026-12-22", "2026-12-24"]]
 
 [people.me]
 leave = []
@@ -24,7 +27,7 @@ id = "CUT"
 name = "Cut over"
 deliverable = "d"
 effort = 1
-prod = true
+needs = ["prod"]
 after = ["A"]
 
 [[tasks]]

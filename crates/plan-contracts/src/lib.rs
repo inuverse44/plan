@@ -43,8 +43,27 @@ pub struct CalendarSpec {
     pub holidays_jp: bool,
     pub year_end: bool,
     pub off: Vec<NaiveDate>,
+    /// Old form of resources.prod (release freezes). Read only; moved into resources by Plan::normalize
+    #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     pub freeze: Vec<(NaiveDate, NaiveDate)>,
 }
+
+/// Something a task needs besides people: an environment, a room, an approval board.
+/// Tasks that need it are not placed in its off periods (a task does not straddle them). Unlike people it has no capacity: any number of tasks can use it at once
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Resource {
+    /// What its off periods are called (e.g. "Release freeze")
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    /// Periods [first day, last day] when it cannot be used
+    #[serde(default)]
+    pub off: Vec<(NaiveDate, NaiveDate)>,
+}
+
+/// The resource the old `prod = true` and `calendar.freeze` stand for
+pub const PROD: &str = "prod";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -87,7 +106,12 @@ pub struct TaskSpec {
     pub owners: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after: Vec<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// Resources this task needs (keys of Plan.resources)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<String>,
+    /// Old form of needs = ["prod"]. Read only; moved into needs by Plan::normalize
+    #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     pub prod: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_before: Option<NaiveDate>,
@@ -131,6 +155,10 @@ pub struct TaskPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<Vec<String>>,
+    /// Old form: true adds "prod" to needs, false removes it. Read only; see TaskPatch::resolve
+    #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "ts", ts(skip))]
     pub prod: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub not_before: Option<NaiveDate>,
@@ -205,6 +233,8 @@ pub struct Plan {
     pub colors: Colors,
     pub people: BTreeMap<String, Person>,
     #[serde(default)]
+    pub resources: BTreeMap<String, Resource>,
+    #[serde(default)]
     pub stories: Vec<Story>,
     pub tasks: Vec<TaskSpec>,
     /// Empty: just the base scenario
@@ -222,8 +252,8 @@ pub struct Plan {
 pub struct BusinessCalendar {
     pub days: Vec<NaiveDate>,
     pub start_slot: usize,
-    /// Same length as days: days when production must not be touched
-    pub frozen: Vec<bool>,
+    /// Days each resource cannot be used (indexes into days)
+    pub blocked: BTreeMap<String, Vec<usize>>,
     /// Days off per person (indexes into days)
     pub leave: BTreeMap<String, Vec<usize>>,
     /// Weekdays that are not business days (holidays, year end, off). Shaded in the UI
@@ -264,7 +294,7 @@ pub struct Task {
     pub val: f64,
     pub owners: Vec<String>,
     pub after: Vec<String>,
-    pub prod: bool,
+    pub needs: Vec<String>,
     pub not_before: Option<NaiveDate>,
     pub fixed: Option<NaiveDate>,
 }
@@ -348,7 +378,7 @@ pub struct TaskView {
     pub owners: Vec<String>,
     pub after: Vec<String>,
     pub reduced_after: Vec<String>,
-    pub prod: bool,
+    pub needs: Vec<String>,
     pub dur: usize,
     pub val: f64,
     pub base_dur: usize,
@@ -403,7 +433,7 @@ pub struct Evaluation {
     pub deadline_task: Option<String>,
     pub deadline_label: Option<String>,
     pub calendar: BusinessCalendar,
-    pub freeze: Vec<(NaiveDate, NaiveDate)>,
+    pub resources: BTreeMap<String, Resource>,
     pub scenarios: Vec<ScenarioInfo>,
     pub rates: Vec<f64>,
     pub estimates: Vec<EstKind>,
@@ -454,6 +484,52 @@ impl Issue {
 /// Name of a scenario × utilization × estimate run ("plan4|1|e")
 pub fn run_key(scenario: &str, rate: f64, est: EstKind) -> String {
     format!("{scenario}|{}|{}", fmt_num(rate), est.code())
+}
+
+// ---------- The old form of production tasks and release freezes ----------
+
+fn set_need(needs: &mut Vec<String>, name: &str, on: bool) {
+    needs.retain(|n| n != name);
+    if on { needs.push(name.to_string()); }
+}
+
+impl TaskSpec {
+    /// Move the old `prod = true` into needs
+    pub fn normalize(&mut self) {
+        if std::mem::take(&mut self.prod) && !self.needs.iter().any(|n| n == PROD) { self.needs.push(PROD.into()); }
+    }
+}
+
+impl TaskPatch {
+    /// Turn the old `prod` into a whole needs list, starting from the needs the task has before the patch
+    pub fn resolve(&mut self, before: &[String]) {
+        if let Some(on) = self.prod.take() {
+            let mut n = self.needs.clone().unwrap_or_else(|| before.to_vec());
+            set_need(&mut n, PROD, on);
+            self.needs = Some(n);
+        }
+    }
+}
+
+impl Plan {
+    /// Move the old forms into the new ones: calendar.freeze → resources.prod, prod = true → needs = ["prod"] (tasks, scenario patches and additions)
+    pub fn normalize(&mut self) {
+        let freeze = std::mem::take(&mut self.calendar.freeze);
+        if !freeze.is_empty() {
+            let r = self.resources.entry(PROD.into()).or_default();
+            if r.label.is_empty() { r.label = "Release freeze".into(); }
+            for f in freeze { if !r.off.contains(&f) { r.off.push(f); } }
+        }
+        for t in &mut self.tasks { t.normalize(); }
+        let base: BTreeMap<String, Vec<String>> = self.tasks.iter().map(|t| (t.id.clone(), t.needs.clone())).collect();
+        for sc in &mut self.scenarios {
+            for a in &mut sc.add { a.normalize(); }
+            for (id, p) in &mut sc.set {
+                let before = base.get(id).cloned().or_else(|| sc.add.iter().find(|a| &a.id == id).map(|a| a.needs.clone())).unwrap_or_default();
+                p.resolve(&before);
+            }
+        }
+    }
 }
 
 /// 1.0 → "1", 0.8 → "0.8" (like Python's :g)
@@ -533,7 +609,7 @@ mod ts_export {
     fn export_ts() {
         let cfg = Config::new().with_large_int("number");
         let mut out = String::from("// Generated by cargo test -p plan-contracts --features ts from the Rust types in plan-contracts. Do not edit\n\n");
-        for d in [Estimate::decl(&cfg), EstKind::decl(&cfg), CalendarSpec::decl(&cfg), Colors::decl(&cfg), Person::decl(&cfg), TaskSpec::decl(&cfg), TaskPatch::decl(&cfg), Story::decl(&cfg), Comment::decl(&cfg), ScenarioSpec::decl(&cfg), Plan::decl(&cfg), BusinessCalendar::decl(&cfg), Kind::decl(&cfg), Scenario::decl(&cfg), Task::decl(&cfg), Change::decl(&cfg), Schedule::decl(&cfg), FloatColor::decl(&cfg), Risk::decl(&cfg), Assessment::decl(&cfg), TaskView::decl(&cfg), RunResult::decl(&cfg), ScenarioInfo::decl(&cfg), Evaluation::decl(&cfg), Level::decl(&cfg), Issue::decl(&cfg), EpicSettings::decl(&cfg), EditOp::decl(&cfg), EpicSummary::decl(&cfg), HistoryEntry::decl(&cfg)] { out.push_str(&d.replace("type ", "declare type ")); out.push_str("\n\n"); }
+        for d in [Estimate::decl(&cfg), EstKind::decl(&cfg), CalendarSpec::decl(&cfg), Colors::decl(&cfg), Person::decl(&cfg), Resource::decl(&cfg), TaskSpec::decl(&cfg), TaskPatch::decl(&cfg), Story::decl(&cfg), Comment::decl(&cfg), ScenarioSpec::decl(&cfg), Plan::decl(&cfg), BusinessCalendar::decl(&cfg), Kind::decl(&cfg), Scenario::decl(&cfg), Task::decl(&cfg), Change::decl(&cfg), Schedule::decl(&cfg), FloatColor::decl(&cfg), Risk::decl(&cfg), Assessment::decl(&cfg), TaskView::decl(&cfg), RunResult::decl(&cfg), ScenarioInfo::decl(&cfg), Evaluation::decl(&cfg), Level::decl(&cfg), Issue::decl(&cfg), EpicSettings::decl(&cfg), EditOp::decl(&cfg), EpicSummary::decl(&cfg), HistoryEntry::decl(&cfg)] { out.push_str(&d.replace("type ", "declare type ")); out.push_str("\n\n"); }
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/src/contracts.d.ts");
         std::fs::write(path, out).unwrap();
     }

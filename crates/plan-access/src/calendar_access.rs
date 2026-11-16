@@ -1,4 +1,4 @@
-//! CalendarAccess: business days, days off per person and release freezes. Japanese public holidays are computed from the rules of the law (equinox formula valid for 1980–2099)
+//! CalendarAccess: business days, days off per person and the off days of resources. Japanese public holidays are computed from the rules of the law (equinox formula valid for 1980–2099)
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use plan_contracts::{BusinessCalendar, Plan};
 use std::collections::{BTreeMap, HashSet};
@@ -61,9 +61,10 @@ impl CalendarAccess for JpRuleCalendar {
             if wk && !off.contains(&d) { days.push(d) } else if wk { weekday_off.push(d) }
             d += Duration::days(1);
         }
-        let frozen = days.iter().map(|x| c.freeze.iter().any(|(a, b)| a <= x && x <= b)).collect();
+        let blocked: BTreeMap<String, Vec<usize>> = plan.resources.iter()
+            .map(|(n, r)| (n.clone(), days.iter().enumerate().filter(|(_, x)| r.off.iter().any(|(a, b)| a <= *x && *x <= b)).map(|(i, _)| i).collect())).collect();
         let leave: BTreeMap<String, Vec<usize>> = plan.people.iter()
             .map(|(p, v)| (p.clone(), v.leave.iter().filter_map(|l| days.iter().position(|x| x == l)).collect())).collect();
-        BusinessCalendar { days, start_slot: if plan.start_pm { 1 } else { 0 }, frozen, leave, off: weekday_off }
+        BusinessCalendar { days, start_slot: if plan.start_pm { 1 } else { 0 }, blocked, leave, off: weekday_off }
     }
 }

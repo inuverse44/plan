@@ -34,7 +34,9 @@ impl HttpPlans {
 impl PlanAccess for HttpPlans {
     fn read_plan(&self, epic: &str) -> Result<Plan, Vec<Issue>> {
         let v = self.call("GET", &format!("/api/epic/{}", enc(epic)), None)?;
-        serde_json::from_value(v["plan"].clone()).map_err(|x| e(format!("cannot read the plan: {x}")))
+        let mut p: Plan = serde_json::from_value(v["plan"].clone()).map_err(|x| e(format!("cannot read the plan: {x}")))?;
+        p.normalize();
+        Ok(p)
     }
     fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> {
         serde_json::from_value(self.call("GET", "/api/epics", None)?).map_err(e)

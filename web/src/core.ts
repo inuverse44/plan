@@ -73,9 +73,10 @@ const P = (() => {
   const ICON = (kind: 'epic' | 'story' | 'task', x: number, y: number, s = 16) => `<use href="#i-${kind}" x="${x}" y="${y}" width="${s}" height="${s}"/>`;
   let toastTimer = 0;
   function toast(s: string) { const t = $('toast'); t.textContent = s; t.style.opacity = '1'; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.opacity = '0', 1600) }
-  // Marker for tasks that touch production (an SVG, not an emoji)
-  const PROD = (x: number, y: number, s = 11) => `<path d="M${x} ${y - s / 2}l${s / 2} ${s / 2}l${-s / 2} ${s / 2}l${-s / 2} ${-s / 2}z" fill="none" stroke="${css('--red')}" stroke-width="1.6"><title>Touches production (avoids release freeze)</title></path>`;
+  // Marker for tasks that need resources (an SVG, not an emoji); the tooltip names them and their off periods
+  const needsTip = (needs: string[]) => 'Needs ' + needs.map(n => { const r = S.ev?.resources?.[n]; return r?.label ? `${n} (avoids ${r.label})` : n }).join(', ');
+  const NEEDS = (needs: string[], x: number, y: number, s = 11) => needs.length ? `<path d="M${x} ${y - s / 2}l${s / 2} ${s / 2}l${-s / 2} ${s / 2}l${-s / 2} ${-s / 2}z" fill="none" stroke="${css('--red')}" stroke-width="1.6"><title>${esc(needsTip(needs))}</title></path>` : '';
 
   const views: Record<string, View> = {};
-  return { $, css, esc, D, iso, md, mdw, pct, num, COLOR, COLOR_NAME, S, index, succOf, related, legend, LEGEND, ICON, toast, PROD, views };
+  return { $, css, esc, D, iso, md, mdw, pct, num, COLOR, COLOR_NAME, S, index, succOf, related, legend, LEGEND, ICON, toast, NEEDS, views };
 })();

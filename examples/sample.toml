@@ -14,7 +14,10 @@ default_owner = "alice"
 [calendar]
 holidays = "JP"
 year_end = true
-freeze = [["2026-11-15", "2026-11-29"], ["2026-12-23", "2027-01-03"]]
+
+[resources.prod]             # production: tasks with needs = ["prod"] are not placed in its off periods
+label = "Release freeze"
+off = [["2026-11-15", "2026-11-29"], ["2026-12-23", "2027-01-03"]]
 
 [colors]
 red = 2
@@ -109,7 +112,7 @@ ticket = "DEMO-16"
 deliverable = "Apply log"
 wait = 2
 after = ["TF", "V06R"]
-prod = true
+needs = ["prod"]
 
 [[tasks]]
 id = "RUN"
@@ -134,7 +137,7 @@ short = "Cutover"
 deliverable = "Cutover log"
 effort = 0.5
 after = ["CMP"]
-prod = true
+needs = ["prod"]
 
 [[tasks]]
 id = "WATCH"

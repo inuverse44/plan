@@ -51,7 +51,7 @@ impl PlanningManager {
             key: l.plan.key.clone(), stories: l.plan.stories.clone(),
             title: l.plan.title.clone(), description: l.plan.description.clone(),
             deadline: l.plan.deadline, deadline_task: l.plan.deadline_task.clone(), deadline_label: l.plan.deadline_label.clone(),
-            freeze: l.plan.calendar.freeze.clone(),
+            resources: l.plan.resources.clone(),
             scenarios: l.scenarios.iter().map(|s| ScenarioInfo { key: s.key.clone(), name: s.name.clone(), note: s.note.clone() }).collect(),
             rates: l.plan.rates.clone(), estimates: l.plan.estimates.clone(), runs, issues, calendar: l.cal,
         })
@@ -130,7 +130,7 @@ fn run(l: &Loaded, sc: &Scenario, rate: f64, est: EstKind, changes: &[Change]) -
         TaskView {
             id: t.id.clone(), story: spec.story.clone(), name: spec.name.clone(), short: spec.short.clone(), ticket: spec.ticket.clone(), deliverable: spec.deliverable.clone(),
             group: spec.group.clone(), note: spec.note.clone(), kind: t.kind, owners: t.owners.clone(), after: t.after.clone(),
-            reduced_after: s.reduced_after[i].clone(), prod: t.prod, dur: ch.and_then(|c| c.dur).unwrap_or(t.dur), val: t.val, base_dur: t.dur,
+            reduced_after: s.reduced_after[i].clone(), needs: t.needs.clone(), dur: ch.and_then(|c| c.dur).unwrap_or(t.dur), val: t.val, base_dur: t.dur,
             release: scheduling::release(t, &l.cal, None).0, es: s.es[i], ef: s.ef[i], tf: s.tf[i], ff: s.ff[i], color: a.colors[i], why: s.why[i].clone(),
             done: spec.done, actual_start: spec.actual_start, actual_finish: spec.actual_finish,
         }

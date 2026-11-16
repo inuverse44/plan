@@ -1,5 +1,6 @@
 //! SchedulingEngine. Encapsulates how tasks are placed.
 //! Tasks go in order of latest start from a resource-free forward/backward pass (least float first), one task per person at a time, back-filling gaps.
+//! A person's days off pause a task; a needed resource's off days push the whole task past them (it does not straddle them).
 //! Float is the largest delay of that one task, from where it was placed, that does not move the end, found by re-scheduling (waiting for people included).
 use plan_contracts::{BusinessCalendar, Change, Issue, Kind, Schedule, Task};
 use std::collections::HashMap;
@@ -98,7 +99,12 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
     let oidx: HashMap<&str, usize> = owners.iter().enumerate().map(|(i, o)| (o.as_str(), i)).collect();
     let towners: Vec<Vec<usize>> = tasks.iter().map(|t| t.owners.iter().map(|o| oidx[o.as_str()]).collect()).collect();
     let leave: Vec<std::collections::HashSet<usize>> = owners.iter().map(|o| cal.leave.get(*o).map(|v| v.iter().copied().collect()).unwrap_or_default()).collect();
-    let frozen = |x: usize| cal.frozen.get(x / 2).copied().unwrap_or(false);
+    // Days each task's resources cannot be used, and which resource blocks each day
+    let blocked: Vec<HashMap<usize, &str>> = tasks.iter().map(|t| {
+        let mut m = HashMap::new();
+        for nd in &t.needs { for &d in cal.blocked.get(nd).map(|v| v.as_slice()).unwrap_or(&[]) { m.entry(d).or_insert(nd.as_str()); } }
+        m
+    }).collect();
     let limit = cal.days.len() * 2;
 
     let run = |delay: Option<(usize, usize)>| -> (Vec<usize>, Vec<usize>, Vec<String>, usize) {
@@ -128,15 +134,15 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
                 let mut x = s;
                 let mut hit: Option<String> = None;
                 while used.len() < dur[k] && x < limit {
-                    if let Some(&o) = towners[k].iter().find(|&&o| busy[o].contains_key(&x)) { hit = Some(tasks[busy[o][&x]].id.clone()); break; }
+                    if let Some(&o) = towners[k].iter().find(|&&o| busy[o].contains_key(&x)) { hit = Some(format!("owner busy ({})", tasks[busy[o][&x]].id)); break; }
                     if towners[k].iter().any(|&o| leave[o].contains(&(x / 2))) { x += 1; continue; }
-                    if t.prod && frozen(x) { hit = Some(String::new()); break; }
+                    if let Some(r) = blocked[k].get(&(x / 2)) { hit = Some(format!("{r} unavailable")); break; }
                     used.push(x);
                     x += 1;
                 }
                 match hit {
                     None => break used,
-                    Some(h) => { s = x + 1; reason = if h.is_empty() { "release freeze".into() } else { format!("owner busy ({h})") }; }
+                    Some(h) => { s = x + 1; reason = h; }
                 }
             };
             for &x in &used { for &o in &towners[k] { busy[o].insert(x, k); } }

@@ -203,10 +203,10 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
         <label>Story<select data-f="story" ${ro ? 'disabled' : ''}>${stories.map(([k, n]) => `<option value="${esc(k)}" ${k === (sp.story || '') ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
         <label>Deliverable${inp('deliverable', sp.deliverable)}</label>
         <div class="row2"><label>Ticket${inp('ticket', sp.ticket)}</label><label>Owner${inp('owners', (sp.owners || []).join(', '), plan.default_owner || '')}</label></div>
+        <label>Needs${inp('needs', (sp.needs || []).join(', '), Object.keys(plan.resources || {}).join(', ') || 'prod')}</label>
         <div class="row2"><label>${sp.wait != null ? 'Wait (days)' : 'Effort (person-days)'}${inp(sp.wait != null ? 'wait' : 'effort', estText(sp.wait ?? sp.effort), '1 or 1, 2, 4')}</label>
           <label>Not before<input type="date" data-f="not_before" value="${sp.not_before || ''}" ${ro ? 'disabled' : ''}></label></div>
         <div class="checks"><label><input type="checkbox" data-f="waitkind" ${sp.wait != null ? 'checked' : ''} ${ro ? 'disabled' : ''}>Wait</label>
-          <label><input type="checkbox" data-f="prod" ${sp.prod ? 'checked' : ''} ${ro ? 'disabled' : ''}>Production</label>
           <label><input type="checkbox" data-f="done" ${sp.done ? 'checked' : ''} ${ro ? 'disabled' : ''}>Done</label></div>
       </div>
       <dl><dt>Start</dt><dd>${mdw(S.start(t.es))} ${S.half(t.es)}</dd><dt>Finish</dt><dd>${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : '—'}</dd>
@@ -229,6 +229,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
       if (f === 'waitkind') { const cur = estParse(estText(sp.wait ?? sp.effort)) ?? 1; return setTask(t.id, v ? { wait: cur, clear: ['effort'] } : { effort: cur, clear: ['wait'] }) }
       if (typeof v === 'boolean') return setTask(t.id, { [f]: v });
       if (f === 'effort' || f === 'wait') { const x = estParse(v); if (x == null) { P.toast('Enter 1 number or 3 (optimistic, likely, pessimistic)'); return render() } return setTask(t.id, { [f]: x }) }
+      if (f === 'needs') return setTask(t.id, { needs: v ? String(v).split(/[,、\s]+/).filter(Boolean) : [] });
       if (f === 'owners') return setTask(t.id, v ? { owners: v.split(/[,、\s]+/).filter(Boolean) } : { clear: ['owners'] });
       if (f === 'not_before') return setTask(t.id, v ? { not_before: v } : { clear: ['not_before'] });
       setTask(t.id, { [f]: v });

@@ -11,3 +11,4 @@ chrono.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+rusqlite = { version = "0.32", features = ["bundled"] }

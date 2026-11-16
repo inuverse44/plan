@@ -4,11 +4,21 @@ declare type Estimate = number | [number, number, number];
 
 declare type EstKind = "o" | "m" | "e" | "p";
 
-declare type CalendarSpec = { holidays_jp: boolean, year_end: boolean, off: Array<string>, freeze: Array<[string, string]>, };
+declare type CalendarSpec = { holidays_jp: boolean, year_end: boolean, off: Array<string>, };
 
 declare type Colors = { red: number, yellow: number, };
 
 declare type Person = { leave: Array<string>, rate: number | null, };
+
+declare type Resource = { 
+/**
+ * What its off periods are called (e.g. "Release freeze")
+ */
+label?: string, 
+/**
+ * Periods [first day, last day] when it cannot be used
+ */
+off: Array<[string, string]>, };
 
 declare type TaskSpec = { id: string, 
 /**
@@ -18,13 +28,17 @@ story?: string, name: string, short?: string, ticket?: string, deliverable?: str
 /**
  * None falls back to default_owner
  */
-owners?: Array<string> | null, after?: Array<string>, prod?: boolean, not_before?: string | null, fixed?: string | null, done?: boolean, 
+owners?: Array<string> | null, after?: Array<string>, 
+/**
+ * Resources this task needs (keys of Plan.resources)
+ */
+needs?: Array<string>, not_before?: string | null, fixed?: string | null, done?: boolean, 
 /**
  * Actual dates (e.g. from an issue tracker). Not used for scheduling; drawn as past bars in the Gantt chart
  */
 actual_start?: string | null, actual_finish?: string | null, unknown_keys?: Array<string>, };
 
-declare type TaskPatch = { story?: string | null, name?: string | null, short?: string | null, ticket?: string | null, deliverable?: string | null, group?: string | null, note?: string | null, effort?: Estimate | null, wait?: Estimate | null, owners?: Array<string> | null, after?: Array<string> | null, prod?: boolean | null, not_before?: string | null, fixed?: string | null, done?: boolean | null, actual_start?: string | null, actual_finish?: string | null, 
+declare type TaskPatch = { story?: string | null, name?: string | null, short?: string | null, ticket?: string | null, deliverable?: string | null, group?: string | null, note?: string | null, effort?: Estimate | null, wait?: Estimate | null, owners?: Array<string> | null, after?: Array<string> | null, needs?: Array<string> | null, not_before?: string | null, fixed?: string | null, done?: boolean | null, actual_start?: string | null, actual_finish?: string | null, 
 /**
  * Names of fields to clear (not_before, fixed, effort, wait, owners)
  */
@@ -52,7 +66,7 @@ declare type Plan = {
 /**
  * Epic key
  */
-key: string, title: string, description: string, start: string, start_pm: boolean, deadline: string | null, deadline_task: string | null, deadline_label: string | null, rates: Array<number>, estimates: Array<EstKind>, round: number, default_owner: string | null, calendar: CalendarSpec, colors: Colors, people: { [key in string]: Person }, stories: Array<Story>, tasks: Array<TaskSpec>, 
+key: string, title: string, description: string, start: string, start_pm: boolean, deadline: string | null, deadline_task: string | null, deadline_label: string | null, rates: Array<number>, estimates: Array<EstKind>, round: number, default_owner: string | null, calendar: CalendarSpec, colors: Colors, people: { [key in string]: Person }, resources: { [key in string]: Resource }, stories: Array<Story>, tasks: Array<TaskSpec>, 
 /**
  * Empty: just the base scenario
  */
@@ -60,9 +74,9 @@ scenarios: Array<ScenarioSpec>, comments: Array<PlanComment>, unknown_keys: Arra
 
 declare type BusinessCalendar = { days: Array<string>, start_slot: number, 
 /**
- * Same length as days: days when production must not be touched
+ * Days each resource cannot be used (indexes into days)
  */
-frozen: Array<boolean>, 
+blocked: { [key in string]: Array<number> }, 
 /**
  * Days off per person (indexes into days)
  */
@@ -84,7 +98,7 @@ dur: number,
 /**
  * Effort (person-days) or wait (business days)
  */
-val: number, owners: Array<string>, after: Array<string>, prod: boolean, not_before: string | null, fixed: string | null, };
+val: number, owners: Array<string>, after: Array<string>, needs: Array<string>, not_before: string | null, fixed: string | null, };
 
 declare type Change = { id: string, min_start?: number, dur?: number, };
 
@@ -108,7 +122,7 @@ declare type Assessment = { colors: Array<FloatColor>, risk: Risk | null, effort
  */
 load: { [key in string]: { [key in string]: number } }, target_slot: number, slack_to_deadline: number | null, critical_path: Array<string>, };
 
-declare type TaskView = { id: string, story: string, name: string, short: string, ticket: string, deliverable: string, group: string, note: string, kind: Kind, owners: Array<string>, after: Array<string>, reduced_after: Array<string>, prod: boolean, dur: number, val: number, base_dur: number, release: number, es: number, ef: number, tf: number | null, ff: number | null, color: FloatColor, why: string, done: boolean, actual_start: string | null, actual_finish: string | null, };
+declare type TaskView = { id: string, story: string, name: string, short: string, ticket: string, deliverable: string, group: string, note: string, kind: Kind, owners: Array<string>, after: Array<string>, reduced_after: Array<string>, needs: Array<string>, dur: number, val: number, base_dur: number, release: number, es: number, ef: number, tf: number | null, ff: number | null, color: FloatColor, why: string, done: boolean, actual_start: string | null, actual_finish: string | null, };
 
 declare type RunResult = { key: string, scenario: string, rate: number, est: EstKind, 
 /**
@@ -118,7 +132,7 @@ tasks: Array<TaskView>, end: number, target: number, slack_to_deadline: number |
 
 declare type ScenarioInfo = { key: string, name: string, note: string, };
 
-declare type Evaluation = { key: string, stories: Array<Story>, title: string, description: string, deadline: string | null, deadline_task: string | null, deadline_label: string | null, calendar: BusinessCalendar, freeze: Array<[string, string]>, scenarios: Array<ScenarioInfo>, rates: Array<number>, estimates: Array<EstKind>, runs: Array<RunResult>, issues: Array<Issue>, };
+declare type Evaluation = { key: string, stories: Array<Story>, title: string, description: string, deadline: string | null, deadline_task: string | null, deadline_label: string | null, calendar: BusinessCalendar, resources: { [key in string]: Resource }, scenarios: Array<ScenarioInfo>, rates: Array<number>, estimates: Array<EstKind>, runs: Array<RunResult>, issues: Array<Issue>, };
 
 declare type Level = "error" | "warning";
 

@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS people (name TEXT PRIMARY KEY, rate REAL);
 CREATE TABLE IF NOT EXISTS leave (person TEXT NOT NULL, day TEXT NOT NULL, PRIMARY KEY (person, day));
 CREATE TABLE IF NOT EXISTS calendar_off (day TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS freeze (start TEXT NOT NULL, finish TEXT NOT NULL, PRIMARY KEY (start, finish));
+CREATE TABLE IF NOT EXISTS resources (name TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS resource_off (name TEXT NOT NULL, start TEXT NOT NULL, finish TEXT NOT NULL, PRIMARY KEY (name, start, finish));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
@@ -63,28 +65,41 @@ impl SqlitePlans {
         let conn = Connection::open(path).map_err(e)?;
         conn.execute_batch(SCHEMA).map_err(e)?;
         // Columns added later (added to old databases too; no-op if present)
-        for col in ["actual_start", "actual_finish"] {
+        for col in ["actual_start", "actual_finish", "needs"] {
             let has: bool = conn.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name=?").map_err(e)?.exists([col]).map_err(e)?;
             if !has { conn.execute_batch(&format!("ALTER TABLE tasks ADD COLUMN {col} TEXT")).map_err(e)?; }
         }
+        // The old forms: tasks.prod → tasks.needs = ["prod"], the freeze table → the resource "prod"
+        conn.execute_batch(&format!("BEGIN;
+            UPDATE tasks SET needs = '[\"{PROD}\"]', prod = 0 WHERE prod = 1 AND (needs IS NULL OR needs = '[]');
+            UPDATE tasks SET prod = 0 WHERE prod = 1;
+            INSERT OR IGNORE INTO resources (name, label) SELECT '{PROD}', 'Release freeze' WHERE EXISTS (SELECT 1 FROM freeze);
+            INSERT OR IGNORE INTO resource_off (name, start, finish) SELECT '{PROD}', start, finish FROM freeze;
+            DELETE FROM freeze;
+            COMMIT;")).map_err(e)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").map_err(e)?;
         Ok(SqlitePlans { conn: Mutex::new(conn) })
     }
 
-    fn common(c: &Connection) -> rusqlite::Result<(CalendarSpec, BTreeMap<String, Person>)> {
+    fn common(c: &Connection) -> rusqlite::Result<(CalendarSpec, BTreeMap<String, Person>, BTreeMap<String, Resource>)> {
         let get = |k: &str| c.query_row("SELECT value FROM settings WHERE key=?", [k], |r| r.get::<_, String>(0)).optional();
         let holidays_jp = get("holidays")?.map(|v| v != "none").unwrap_or(true);
         let year_end = get("year_end")?.map(|v| v == "true").unwrap_or(true);
         let off = c.prepare("SELECT day FROM calendar_off ORDER BY day")?.query_map([], |r| r.get::<_, String>(0))?.filter_map(|x| d(x.ok())).collect();
-        let freeze = c.prepare("SELECT start, finish FROM freeze ORDER BY start")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .filter_map(|x| x.ok()).filter_map(|(a, b)| Some((d(Some(a))?, d(Some(b))?))).collect();
+        let mut resources = BTreeMap::new();
+        for row in c.prepare("SELECT name, label FROM resources ORDER BY name")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))? {
+            let (n, label) = row?;
+            let off = c.prepare("SELECT start, finish FROM resource_off WHERE name=? ORDER BY start")?.query_map([&n], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .filter_map(|x| x.ok()).filter_map(|(a, b)| Some((d(Some(a))?, d(Some(b))?))).collect();
+            resources.insert(n, Resource { label, off });
+        }
         let mut people = BTreeMap::new();
         for row in c.prepare("SELECT name, rate FROM people ORDER BY name")?.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<f64>>(1)?)))? {
             let (n, rate) = row?;
             let leave = c.prepare("SELECT day FROM leave WHERE person=? ORDER BY day")?.query_map([&n], |r| r.get::<_, String>(0))?.filter_map(|x| d(x.ok())).collect();
             people.insert(n, Person { leave, rate });
         }
-        Ok((CalendarSpec { holidays_jp, year_end, off, freeze }, people))
+        Ok((CalendarSpec { holidays_jp, year_end, off, freeze: vec![] }, people, resources))
     }
 
     fn read(c: &Connection, epic: &str) -> Result<Plan, Vec<Issue>> {
@@ -92,20 +107,21 @@ impl SqlitePlans {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?, r.get::<_, f64>(9)?, r.get::<_, Option<String>>(10)?, r.get::<_, f64>(11)?, r.get::<_, f64>(12)?))
         }).optional().map_err(e)?.ok_or_else(|| vec![Issue::error(format!("no epic {epic}"))])?;
-        let (calendar, people) = Self::common(c).map_err(e)?;
+        let (calendar, people, resources) = Self::common(c).map_err(e)?;
         let stories = c.prepare("SELECT key, name, purpose, dod FROM stories WHERE epic=? ORDER BY sort").map_err(e)?
             .query_map([epic], |r| Ok(Story { key: r.get(0)?, name: r.get(1)?, purpose: r.get(2)?, dod: r.get(3)? })).map_err(e)?.filter_map(|x| x.ok()).collect();
         let mut deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for x in c.prepare("SELECT task, pred FROM deps WHERE epic=? ORDER BY sort").map_err(e)?.query_map([epic], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)? {
             let (t, p) = x.map_err(e)?; deps.entry(t).or_default().push(p);
         }
-        let tasks = c.prepare("SELECT key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, prod, not_before, fixed, done, actual_start, actual_finish FROM tasks WHERE epic=? ORDER BY sort").map_err(e)?
+        let tasks = c.prepare("SELECT key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, needs, not_before, fixed, done, actual_start, actual_finish FROM tasks WHERE epic=? ORDER BY sort").map_err(e)?
             .query_map([epic], |r| {
                 let id: String = r.get(0)?;
                 Ok(TaskSpec {
                     after: deps.get(&id).cloned().unwrap_or_default(), story: r.get(1)?, name: r.get(2)?, short: r.get(3)?, ticket: r.get(4)?, deliverable: r.get(5)?,
                     group: r.get(6)?, note: r.get(7)?, effort: est_from(r.get(8)?), wait: est_from(r.get(9)?),
-                    owners: r.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()), prod: r.get(11)?,
+                    owners: r.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()),
+                    needs: r.get::<_, Option<String>>(11)?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(), prod: false,
                     not_before: d(r.get(12)?), fixed: d(r.get(13)?), done: r.get(14)?, actual_start: d(r.get(15)?), actual_finish: d(r.get(16)?), unknown_keys: vec![], id,
                 })
             }).map_err(e)?.filter_map(|x| x.ok()).collect();
@@ -123,7 +139,7 @@ impl SqlitePlans {
             key: epic.to_string(), title: name, description, start: d(Some(start)).ok_or_else(|| vec![Issue::error("start is not a date")])?, start_pm,
             deadline: d(deadline), deadline_task, deadline_label, rates: serde_json::from_str(&rates).unwrap_or(vec![1.0]),
             estimates: serde_json::from_str::<Vec<String>>(&ests).unwrap_or_default().iter().filter_map(|x| EstKind::parse(x)).collect(),
-            round, default_owner, calendar, colors: Colors { red, yellow }, people, stories, tasks, scenarios, comments, unknown_keys: vec![],
+            round, default_owner, calendar, colors: Colors { red, yellow }, people, resources, stories, tasks, scenarios, comments, unknown_keys: vec![],
         })
     }
 
@@ -140,9 +156,9 @@ impl SqlitePlans {
             tx.execute("INSERT INTO stories (epic, key, name, purpose, dod, sort) VALUES (?,?,?,?,?,?)", params![k, s.key, s.name, s.purpose, s.dod, i as i64])?;
         }
         for (i, t) in p.tasks.iter().enumerate() {
-            tx.execute("INSERT INTO tasks (epic, key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, prod, not_before, fixed, done, actual_start, actual_finish, sort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            tx.execute("INSERT INTO tasks (epic, key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, needs, not_before, fixed, done, actual_start, actual_finish, sort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 params![k, t.id, t.story, t.name, t.short, t.ticket, t.deliverable, t.group, t.note, est_to(&t.effort), est_to(&t.wait),
-                    t.owners.as_ref().map(|o| serde_json::to_string(o).unwrap()), t.prod, t.not_before.map(|x| x.to_string()), t.fixed.map(|x| x.to_string()), t.done,
+                    t.owners.as_ref().map(|o| serde_json::to_string(o).unwrap()), (!t.needs.is_empty()).then(|| serde_json::to_string(&t.needs).unwrap()), t.not_before.map(|x| x.to_string()), t.fixed.map(|x| x.to_string()), t.done,
                     t.actual_start.map(|x| x.to_string()), t.actual_finish.map(|x| x.to_string()), i as i64])?;
             for (j, pr) in t.after.iter().enumerate() { tx.execute("INSERT OR IGNORE INTO deps (epic, task, pred, sort) VALUES (?,?,?,?)", params![k, t.id, pr, (i * 100 + j) as i64])?; }
         }
@@ -223,7 +239,10 @@ impl PlanAccess for SqlitePlans {
         let cal = &plan.calendar;
         tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('holidays', ?), ('year_end', ?)", params![if cal.holidays_jp { "JP" } else { "none" }, cal.year_end.to_string()]).map_err(e)?;
         for d in &cal.off { tx.execute("INSERT OR IGNORE INTO calendar_off (day) VALUES (?)", [d.to_string()]).map_err(e)?; }
-        for (a, b) in &cal.freeze { tx.execute("INSERT OR IGNORE INTO freeze (start, finish) VALUES (?,?)", [a.to_string(), b.to_string()]).map_err(e)?; }
+        for (n, r) in &plan.resources {
+            tx.execute("INSERT INTO resources (name, label) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET label=CASE WHEN ?2 = '' THEN label ELSE ?2 END", params![n, r.label]).map_err(e)?;
+            for (a, b) in &r.off { tx.execute("INSERT OR IGNORE INTO resource_off (name, start, finish) VALUES (?,?,?)", [n, &a.to_string(), &b.to_string()]).map_err(e)?; }
+        }
         for (n, p) in &plan.people {
             tx.execute("INSERT INTO people (name, rate) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET rate=COALESCE(?2, rate)", params![n, p.rate]).map_err(e)?;
             for l in &p.leave { tx.execute("INSERT OR IGNORE INTO leave (person, day) VALUES (?,?)", [n, &l.to_string()]).map_err(e)?; }

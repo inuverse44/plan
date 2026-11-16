@@ -29,7 +29,7 @@ The structure follows *The Method* (Löwy, *Righting Software*, part 1): each ar
 | How edits are made (CLI, UI, batch, future MCP) | high | `PlanEditingManager` and the clients |
 | Which scenarios are compared | high | `ScenarioEngine` |
 | How durations are estimated (PERT, rounding, utilization) | medium | `EstimationEngine` |
-| How tasks are placed (resources, freezes, ordering rule) | medium | `SchedulingEngine` |
+| How tasks are placed (people, resources and their off periods, ordering rule) | medium | `SchedulingEngine` |
 | How a plan is judged (float colors, risk metrics, lint) | medium | `AnalysisEngine` |
 | Where the calendar comes from (holiday rules) | low | `CalendarAccess` |
 
@@ -84,7 +84,7 @@ flowchart TB
 
 - No explanatory text under headings; definitions live in tooltips and the Help page.
 - Every drag has a keyboard alternative; drags start after 4 px.
-- Color is never the only signal: critical tasks have a thick outline and bold labels, waits are hatched, production tasks have a marker.
+- Color is never the only signal: critical tasks have a thick outline and bold labels, waits are hatched, tasks that need resources have a marker.
 - Float uses one hue (blue, dark to light) plus orange for critical, so it reads under red–green color vision deficiency; borders reach 3:1 contrast (WCAG 2.1 SC 1.4.11).
 
 ## Verification

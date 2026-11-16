@@ -75,20 +75,25 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             if task.id.is_empty() { return Err(Issue::error("task key is empty")); }
             if has(plan, &task.id) { return Err(Issue::error(format!("task {} already exists", task.id))); }
             let mut t = task.clone();
+            t.normalize();
             if t.name.is_empty() { t.name = t.id.clone(); }
             if t.short.is_empty() { t.short = t.name.clone(); }
             plan.tasks.push(t);
         }
         EditOp::SetTask { key, patch, scenario: None } => {
             let t = plan.tasks.iter_mut().find(|t| &t.id == key).ok_or_else(|| Issue::error(format!("no task {key}")))?;
-            plan_patch(t, patch);
+            let mut patch = patch.clone();
+            patch.resolve(&t.needs);
+            plan_patch(t, &patch);
         }
         EditOp::SetTask { key, patch, scenario: Some(sk) } => {
+            let base = plan.tasks.iter().find(|t| &t.id == key).map(|t| t.needs.clone()).unwrap_or_default();
             let sc = plan.scenarios.iter_mut().find(|s| &s.key == sk).ok_or_else(|| Issue::error(format!("no scenario {sk}")))?;
-            if let Some(a) = sc.add.iter_mut().find(|t| &t.id == key) { plan_patch(a, patch); return Ok(()); }
+            let mut patch = patch.clone();
+            if let Some(a) = sc.add.iter_mut().find(|t| &t.id == key) { patch.resolve(&a.needs); plan_patch(a, &patch); return Ok(()); }
             match sc.set.iter_mut().find(|(k, _)| k == key) {
-                Some((_, p)) => merge_patch(p, patch),
-                None => sc.set.push((key.clone(), patch.clone())),
+                Some((_, p)) => { patch.resolve(p.needs.as_deref().unwrap_or(&base)); merge_patch(p, &patch) }
+                None => { patch.resolve(&base); sc.set.push((key.clone(), patch)) }
             }
         }
         EditOp::DeleteTask { key } => {
@@ -147,8 +152,7 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
 
 fn plan_patch(t: &mut TaskSpec, p: &TaskPatch) {
     macro_rules! set { ($($f:ident),*) => { $( if let Some(v) = &p.$f { t.$f = v.clone(); } )* } }
-    set!(story, name, short, ticket, deliverable, group, note, after);
-    if let Some(v) = p.prod { t.prod = v; }
+    set!(story, name, short, ticket, deliverable, group, note, after, needs);
     if let Some(v) = p.done { t.done = v; }
     if p.effort.is_some() { t.effort = p.effort.clone(); t.wait = None; }
     if p.wait.is_some() { t.wait = p.wait.clone(); t.effort = None; }
@@ -164,7 +168,7 @@ fn plan_patch(t: &mut TaskSpec, p: &TaskPatch) {
 
 fn merge_patch(a: &mut TaskPatch, b: &TaskPatch) {
     macro_rules! m { ($($f:ident),*) => { $( if b.$f.is_some() { a.$f = b.$f.clone(); } )* } }
-    m!(story, name, short, ticket, deliverable, group, note, effort, wait, owners, after, prod, not_before, fixed, done, actual_start, actual_finish);
+    m!(story, name, short, ticket, deliverable, group, note, effort, wait, owners, after, needs, not_before, fixed, done, actual_start, actual_finish);
     if b.effort.is_some() { a.wait = None; }
     if b.wait.is_some() { a.effort = None; }
     for c in &b.clear { if !a.clear.contains(c) { a.clear.push(c.clone()); } }
@@ -197,8 +201,7 @@ fn task_lines(t: &TaskSpec, out: &mut String) {
 ", qlist(o))); }
     if !t.after.is_empty() { out.push_str(&format!("after = {}
 ", qlist(&t.after))); }
-    if t.prod { out.push_str("prod = true
-"); }
+    if !t.needs.is_empty() { out.push_str(&format!("needs = {}\n", qlist(&t.needs))); }
     if let Some(d) = t.not_before { out.push_str(&format!("not_before = \"{d}\"\n")); }
     if let Some(d) = t.fixed { out.push_str(&format!("fixed = \"{d}\"\n")); }
     if t.done { out.push_str("done = true\n"); }
@@ -214,7 +217,7 @@ fn patch_lines(p: &TaskPatch, out: &mut String) {
     if let Some(e) = &p.wait { out.push_str(&format!("wait = {}\n", est(e))); }
     if let Some(o) = &p.owners { out.push_str(&format!("owner = {}\n", qlist(o))); }
     if let Some(a) = &p.after { out.push_str(&format!("after = {}\n", qlist(a))); }
-    if let Some(v) = p.prod { out.push_str(&format!("prod = {v}\n")); }
+    if let Some(v) = &p.needs { out.push_str(&format!("needs = {}\n", qlist(v))); }
     if let Some(d) = p.not_before { out.push_str(&format!("not_before = \"{d}\"\n")); }
     if let Some(d) = p.fixed { out.push_str(&format!("fixed = \"{d}\"\n")); }
     if let Some(v) = p.done { out.push_str(&format!("done = {v}\n")); }
@@ -237,11 +240,15 @@ pub fn to_toml(p: &Plan) -> String {
     let c = &p.calendar;
     o.push_str(&format!("\n[calendar]\nholidays = {}\nyear_end = {}\n", if c.holidays_jp { "\"JP\"" } else { "false" }, c.year_end));
     if !c.off.is_empty() { o.push_str(&format!("off = [{}]\n", c.off.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(", "))); }
-    if !c.freeze.is_empty() { o.push_str(&format!("freeze = [{}]\n", c.freeze.iter().map(|(a, b)| format!("[\"{a}\", \"{b}\"]")).collect::<Vec<_>>().join(", "))); }
     o.push_str(&format!("\n[colors]\nred = {}\nyellow = {}\n", fmt_num(p.colors.red), fmt_num(p.colors.yellow)));
     for (name, pe) in &p.people {
         o.push_str(&format!("\n[people.{}]\nleave = [{}]\n", q(name), pe.leave.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(", ")));
         if let Some(r) = pe.rate { o.push_str(&format!("rate = {}\n", fmt_num(r))); }
+    }
+    for (name, r) in &p.resources {
+        o.push_str(&format!("\n[resources.{}]\n", q(name)));
+        if !r.label.is_empty() { o.push_str(&format!("label = {}\n", q(&r.label))); }
+        o.push_str(&format!("off = [{}]\n", r.off.iter().map(|(a, b)| format!("[\"{a}\", \"{b}\"]")).collect::<Vec<_>>().join(", ")));
     }
     for s in &p.stories {
         o.push_str(&format!("\n[[stories]]\nkey = {}\nname = {}\n", q(&s.key), q(&s.name)));
@@ -300,7 +307,7 @@ fn list_of(v: &Value) -> Vec<String> {
     }
 }
 
-const TASK_KEYS: [&str; 18] = ["actual_start", "actual_finish", "story", "id", "name", "short", "ticket", "deliverable", "effort", "wait", "owner", "after", "prod", "not_before", "fixed", "done", "group", "note"];
+const TASK_KEYS: [&str; 19] = ["actual_start", "actual_finish", "story", "id", "name", "short", "ticket", "deliverable", "effort", "wait", "owner", "after", "needs", "prod", "not_before", "fixed", "done", "group", "note"];
 
 fn task(t: &Table, where_: &str) -> Result<TaskSpec, Issue> {
     let id = str_of(t, "id");
@@ -318,6 +325,7 @@ fn task(t: &Table, where_: &str) -> Result<TaskSpec, Issue> {
         wait: t.get("wait").map(|v| estimate(v, &w)).transpose()?,
         owners: t.get("owner").map(list_of),
         after: t.get("after").map(list_of).unwrap_or_default(),
+        needs: t.get("needs").map(list_of).unwrap_or_default(),
         prod: t.get("prod").and_then(|v| v.as_bool()).unwrap_or(false),
         not_before: opt_date(t, "not_before", &w)?,
         fixed: opt_date(t, "fixed", &w)?,
@@ -338,6 +346,7 @@ fn patch(t: &Table, w: &str) -> Result<TaskPatch, Issue> {
         wait: t.get("wait").map(|v| estimate(v, w)).transpose()?,
         owners: t.get("owner").map(list_of),
         after: t.get("after").map(list_of),
+        needs: t.get("needs").map(list_of),
         prod: t.get("prod").and_then(|v| v.as_bool()),
         not_before: opt_date(t, "not_before", w)?,
         fixed: opt_date(t, "fixed", w)?,
@@ -347,20 +356,40 @@ fn patch(t: &Table, w: &str) -> Result<TaskPatch, Issue> {
     })
 }
 
-const TOP_KEYS: [&str; 19] = ["key", "stories", "title", "description", "start", "start_half", "deadline", "deadline_task", "deadline_label", "rates", "estimates",
+const TOP_KEYS: [&str; 20] = ["resources", "key", "stories", "title", "description", "start", "start_half", "deadline", "deadline_task", "deadline_label", "rates", "estimates",
     "round", "default_owner", "calendar", "colors", "people", "tasks", "scenarios", "$schema"];
 
 fn one<T>(r: Result<T, Issue>) -> Result<T, Vec<Issue>> { r.map_err(|e| vec![e]) }
 
+/// [[first, last], …]
+fn periods(v: Option<&Value>, where_: &str) -> Result<Vec<(NaiveDate, NaiveDate)>, Vec<Issue>> {
+    let mut out = Vec::new();
+    for p in v.and_then(|v| v.as_array()).cloned().unwrap_or_default() {
+        let a = p.as_array().ok_or_else(|| vec![err(format!("{where_}: write [[\"start\", \"end\"], …]"))])?;
+        if a.len() != 2 { return Err(vec![err(format!("{where_}: each period is [start, end]"))]); }
+        out.push((one(date(&a[0], where_))?, one(date(&a[1], where_))?));
+    }
+    Ok(out)
+}
+
+/// A plan from TOML, with the old forms (prod, calendar.freeze) moved into the new ones
 pub fn parse(text: &str) -> Result<Plan, Vec<Issue>> {
+    let mut p = parse_raw(text)?;
+    p.normalize();
+    Ok(p)
+}
+
+fn parse_raw(text: &str) -> Result<Plan, Vec<Issue>> {
     let raw: Table = text.parse().map_err(|e: toml::de::Error| vec![err(format!("invalid TOML: {}", e.message()))])?;
     let empty = Table::new();
     let cal = raw.get("calendar").and_then(|v| v.as_table()).unwrap_or(&empty);
-    let mut freeze = Vec::new();
-    for p in cal.get("freeze").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
-        let a = p.as_array().ok_or_else(|| vec![err("calendar.freeze: write [[\"start\", \"end\"], …]")])?;
-        if a.len() != 2 { return Err(vec![err("calendar.freeze: each period is [start, end]")]); }
-        freeze.push((one(date(&a[0], "calendar.freeze"))?, one(date(&a[1], "calendar.freeze"))?));
+    let freeze = periods(cal.get("freeze"), "calendar.freeze")?;
+    let mut resources = BTreeMap::new();
+    if let Some(rt) = raw.get("resources").and_then(|v| v.as_table()) {
+        for (name, v) in rt {
+            let t = v.as_table().unwrap_or(&empty);
+            resources.insert(name.clone(), Resource { label: str_of(t, "label"), off: periods(t.get("off"), &format!("resources.{name}.off"))? });
+        }
     }
     let off = cal.get("off").and_then(|v| v.as_array()).map(|a| a.iter().map(|v| date(v, "calendar.off")).collect::<Result<Vec<_>, _>>()).transpose().map_err(|e| vec![e])?.unwrap_or_default();
     let colors_t = raw.get("colors").and_then(|v| v.as_table());
@@ -432,6 +461,7 @@ pub fn parse(text: &str) -> Result<Plan, Vec<Issue>> {
         },
         colors,
         people,
+        resources,
         tasks,
         scenarios,
         comments: vec![],
