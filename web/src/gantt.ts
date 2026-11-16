@@ -51,10 +51,12 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
   const stories = ctx.plan?.stories || [];
   const known = new Set(stories.map(x => x.key));
   const groupOf = (t: TaskView) => known.has(t.story) ? t.story : '';
-  const groups: { key: string; name: string }[] = stories.map(x => ({ key: x.key, name: x.name }));
+  const mine = (t: TaskView) => !ctx.owner || t.owners.includes(ctx.owner);
+  let groups: { key: string; name: string }[] = stories.map(x => ({ key: x.key, name: x.name }));
   if (run.tasks.some(t => !known.has(t.story))) groups.push({ key: '', name: 'No story' });
+  if (ctx.owner) groups = groups.filter(g => run.tasks.some(t => groupOf(t) === g.key && mine(t)));
   const span = (r: RunResult, g: { key: string; name: string }) => {
-    const all = r.tasks.filter(t => groupOf(t) === g.key && (t.kind !== 'done' || t.actual_start));
+    const all = r.tasks.filter(t => groupOf(t) === g.key && mine(t) && (t.kind !== 'done' || t.actual_start));
     const mem = all.filter(t => t.kind !== 'done');
     if (!all.length) return null;
     const xs2 = all.map(t => bx(t));
@@ -70,6 +72,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
   const K = P.index(run), seen = new Set();
   let deps = '';
   for (const t of run.tasks) for (const p of t.reduced_after) {
+    if (!mine(t) || !mine(K[p])) continue;
     const a = groupOf(K[p]), b = groupOf(t), k = a + '>' + b;
     if (a === b || seen.has(k)) continue; seen.add(k);
     const ia = groups.findIndex(g => g.key === a), ib = groups.findIndex(g => g.key === b);
@@ -84,7 +87,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     if (sel) bars += `<rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
     bars += `<g class="story-row" data-story="${esc(g.key)}">` + (g.key ? P.ICON('story', 6, y + 8) : '') +
       `<text x="${g.key ? 28 : 8}" y="${y + 21}" font-size="13" font-weight="600" style="${g.key ? '' : `fill:${css('--muted')}`}">${esc(g.name.slice(0, 15))}<title>${esc(g.name)}</title></text>`;
-    bars += ownerCell([...new Set(run.tasks.filter(t => groupOf(t) === g.key).flatMap(t => t.owners))], ow, y);
+    bars += ownerCell([...new Set(run.tasks.filter(t => groupOf(t) === g.key && mine(t)).flatMap(t => t.owners))], ow, y);
     if (sp) {
       const x1 = sp.x1, w = Math.max(6, sp.x2 - x1), crit = sp.color === 'crit';
       if (b0 && (b0.x1 !== sp.x1 || b0.x2 !== sp.x2)) bars += `<rect x="${b0.x1}" y="${y + 7}" width="${Math.max(3, b0.x2 - b0.x1)}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
@@ -111,7 +114,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   const sIdx: Record<string, number> = Object.fromEntries(stories.map((x, i) => [x.key, i]));
   // Done tasks with actual dates come first by actual start, the rest by computed start
   const when = (t: TaskView) => t.kind === 'done' && t.actual_start ? (D(t.actual_start).getTime() - D('2000-01-01').getTime()) / 864e5 - 1e6 : t.es;
-  const ids = base.tasks.map(t => t.id).sort((a, b) => ((sIdx[B[a].story] ?? 1e9) - (sIdx[B[b].story] ?? 1e9)) || (when(B[a]) - when(B[b])));
+  const ids = base.tasks.filter(t => !ctx.owner || t.owners.includes(ctx.owner)).map(t => t.id).sort((a, b) => ((sIdx[B[a].story] ?? 1e9) - (sIdx[B[b].story] ?? 1e9)) || (when(B[a]) - when(B[b])));
   // A row is a task id or a story header
   const rows: (string | { story: string })[] = [];
   let curS: string | undefined = undefined;
@@ -120,7 +123,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     if (sk !== curS && sk) rows.push({ story: sk });
     curS = sk; rows.push(id);
   }
-  for (const x of stories) if (!ids.some(id => B[id].story === x.key)) rows.push({ story: x.key });
+  if (!ctx.owner) for (const x of stories) if (!ids.some(id => B[id].story === x.key)) rows.push({ story: x.key });
   const K = P.index(run);
   const { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head } = ganttFrame(el, ctx, rows.length);
   let s = head;
@@ -132,6 +135,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
 
   let deps = '';
   for (const k of taskRows) for (const p of K[k].reduced_after) {
+    if (!rows.includes(p)) continue; // filtered out by owner
     const x1 = bx(K[p])[1], y1 = ry(p) + rh / 2, x2 = bx(K[k])[0], y2 = ry(k) + rh / 2;
     const on = rel && rel.has(p) && rel.has(k), tight = K[p].ef === K[k].es;
     const d = x2 - 12 >= x1 ? `M${x1} ${y1}H${x1 + 6}V${y2}H${x2 - 1}` : `M${x1} ${y1}h6V${y2 + (y2 > y1 ? -rh / 2 : rh / 2)}H${x2 - 8}V${y2}H${x2 - 1}`;

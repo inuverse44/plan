@@ -175,7 +175,7 @@ impl PlanAccess for FirestorePlans {
 
     fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> {
         let mut v: Vec<EpicSummary> = self.all_plans()?.into_iter().map(|p| EpicSummary {
-            key: p.key, name: p.title, start: p.start, deadline: p.deadline, owners: p.owners, stories: p.stories.len(), tasks: p.tasks.len(), scenarios: p.scenarios.len(),
+            people: p.people(), key: p.key, name: p.title, start: p.start, deadline: p.deadline, owners: p.owners, stories: p.stories.len(), tasks: p.tasks.len(), scenarios: p.scenarios.len(),
         }).collect();
         v.sort_by(|a, b| a.start.cmp(&b.start));
         Ok(v)

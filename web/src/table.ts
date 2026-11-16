@@ -2,7 +2,7 @@
 P.views.table = function (el: HTMLElement, ctx: ViewCtx) {
   const { esc, mdw, S } = P;
   const run = ctx.run;
-  const rows = [...run.tasks].sort((a, b) => a.es - b.es);
+  const rows = run.tasks.filter(t => !ctx.owner || t.owners.includes(ctx.owner)).sort((a, b) => a.es - b.es);
   let h = '<table><thead><tr><th>ID</th><th>Task</th><th>Deliverable</th><th>Ticket</th><th>Owner</th><th>Effort</th><th>Wait</th><th>After</th><th>Start</th><th>Finish</th><th>Float</th><th>Driven by</th></tr></thead><tbody>';
   for (const t of rows) {
     const v = t.dur / 2 * (t.kind === 'work' ? Number(run.rate) * Math.max(t.owners.length, 1) : 1);

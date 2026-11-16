@@ -187,9 +187,11 @@ impl PlanAccess for SqlitePlans {
     fn list_epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> {
         let c = self.conn.lock().unwrap();
         let mut st = c.prepare("SELECT key, name, start, deadline, (SELECT COUNT(*) FROM stories s WHERE s.epic=e.key), (SELECT COUNT(*) FROM tasks t WHERE t.epic=e.key), (SELECT COUNT(*) FROM scenarios c WHERE c.epic=e.key), owners FROM epics e ORDER BY sort").map_err(e)?;
-        let rows = st.query_map([], |r| Ok(EpicSummary { key: r.get(0)?, name: r.get(1)?, start: d(Some(r.get(2)?)).unwrap_or_default(), deadline: d(r.get(3)?), owners: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
+        let rows = st.query_map([], |r| Ok(EpicSummary { key: r.get(0)?, name: r.get(1)?, start: d(Some(r.get(2)?)).unwrap_or_default(), deadline: d(r.get(3)?), owners: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(), people: vec![],
             stories: r.get::<_, i64>(4)? as usize, tasks: r.get::<_, i64>(5)? as usize, scenarios: r.get::<_, i64>(6)? as usize })).map_err(e)?;
-        Ok(rows.filter_map(|x| x.ok()).collect())
+        let mut v: Vec<EpicSummary> = rows.filter_map(|x| x.ok()).collect();
+        for x in &mut v { if let Ok(p) = Self::read(&c, &x.key) { x.people = p.people() } }
+        Ok(v)
     }
 
     fn apply(&self, epic: &str, actor: &str, ops: &[EditOp], validate: Validate) -> Result<(), Vec<Issue>> {

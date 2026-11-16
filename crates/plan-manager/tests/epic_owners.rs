@@ -13,8 +13,9 @@ fn epic_owners_round_trip() {
     let _ = std::fs::remove_file(&db);
     let ed = PlanEditingManager::new(Arc::new(SqlitePlans::open(&db).unwrap()));
     ed.import(&TomlFile(root().join("examples/sample.toml")), Some("a"), "test").unwrap();
-    // none at first
+    // none at first; people are the tasks' owners
     assert!(ed.plan("a").unwrap().owners.is_empty());
+    assert_eq!(ed.epics().unwrap()[0].people, ["alice"]);
     assert!(ed.epics().unwrap()[0].owners.is_empty());
 
     // set (blanks dropped), then read back from SQLite and the list
@@ -22,6 +23,9 @@ fn epic_owners_round_trip() {
     set(&["alice", " ", "bob"]);
     assert_eq!(ed.plan("a").unwrap().owners, ["alice", "bob"]);
     assert_eq!(ed.epics().unwrap()[0].owners, ["alice", "bob"]);
+    // people: the epic's owners and its tasks' owners (the sample's tasks fall back to default_owner alice)
+    assert_eq!(ed.epics().unwrap()[0].people, ["alice", "bob"]);
+    assert_eq!(ed.plan("a").unwrap().people(), ["alice", "bob"]);
     // other settings leave them alone
     ed.apply("a", "test", &[EditOp::SetEpic { settings: EpicSettings { name: Some("Renamed".into()), ..Default::default() } }]).unwrap();
     assert_eq!(ed.plan("a").unwrap().owners, ["alice", "bob"]);

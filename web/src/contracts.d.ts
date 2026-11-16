@@ -156,7 +156,11 @@ declare type EpicSettings = { name?: string, description?: string, start?: strin
 
 declare type EditOp = { "op": "set_epic", settings: EpicSettings, } | { "op": "set_story", story: Story, } | { "op": "delete_story", key: string, } | { "op": "add_task", task: TaskSpec, } | { "op": "set_task", key: string, patch: TaskPatch, scenario?: string, } | { "op": "delete_task", key: string, } | { "op": "link", task: string, pred: string, } | { "op": "unlink", task: string, pred: string, } | { "op": "clone_scenario", from?: string, key: string, name: string, } | { "op": "set_scenario", key: string, name?: string, note?: string, } | { "op": "delete_scenario", key: string, } | { "op": "add_comment", target: string, text: string, } | { "op": "delete_comment", id: number, };
 
-declare type EpicSummary = { key: string, name: string, start: string, deadline: string | null, owners: Array<string>, stories: number, tasks: number, scenarios: number, };
+declare type EpicSummary = { key: string, name: string, start: string, deadline: string | null, owners: Array<string>, 
+/**
+ * Everyone in the epic: its owners and the owners of its tasks (default_owner for tasks without one)
+ */
+people: Array<string>, stories: number, tasks: number, scenarios: number, };
 
 declare type HistoryEntry = { id: number, at: string, actor: string, epic: string, op: string, payload: string, };
 

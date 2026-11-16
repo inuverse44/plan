@@ -26,6 +26,8 @@ interface ViewCtx {
   dragged: boolean;
   /** Other epics' loads (their default runs), for people who work on several epics. Empty in an exported page */
   others: EpicLoad[];
+  /** Owner filter: show only this person's tasks (null = everyone). The schedule is not recomputed */
+  owner: string | null;
 }
 type View = (el: HTMLElement, ctx: ViewCtx) => void;
 type ColorName = FloatColor | 'muted' | 'accent' | 'focus';

@@ -530,6 +530,14 @@ impl TaskPatch {
 }
 
 impl Plan {
+    /// Everyone in the epic: its owners and the owners of its base tasks (default_owner for work without one), sorted
+    pub fn people(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.owners.clone();
+        for t in &self.tasks {
+            match &t.owners { Some(o) => v.extend(o.iter().cloned()), None => if !t.done && t.wait.is_none() { v.extend(self.default_owner.iter().cloned()) } }
+        }
+        v.sort(); v.dedup(); v
+    }
     /// Move the old forms into the new ones: calendar.freeze → resources.prod, prod = true → needs = ["prod"] (tasks, scenario patches and additions)
     pub fn normalize(&mut self) {
         let freeze = std::mem::take(&mut self.calendar.freeze);
@@ -605,6 +613,9 @@ pub struct EpicSummary {
     pub deadline: Option<NaiveDate>,
     #[serde(default)]
     pub owners: Vec<String>,
+    /// Everyone in the epic: its owners and the owners of its tasks (default_owner for tasks without one)
+    #[serde(default)]
+    pub people: Vec<String>,
     pub stories: usize,
     pub tasks: usize,
     pub scenarios: usize,

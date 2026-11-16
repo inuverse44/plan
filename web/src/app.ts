@@ -21,15 +21,17 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     target: 'all' as 'all' | 'one',
     changes: {} as Record<string, Moves>, hist: {} as Record<string, string[]>, fut: {} as Record<string, string[]>, pending: null as string | null,
     prefs: {} as Record<string, { s: string; r: string; e: EstKind }>,
+    /** Owner filter ('' = everyone), shared by the epic list and the epics */
+    owner: '',
   };
   // null while no epic is open (nothing reads them before that; render checks ev first)
   let planner: wasm_bindgen.Planner = null!, ev: Evaluation = null!, plan: Plan = null!, version: number | null = null, curCache: { sig: string; run: RunResult } | null = null;
-  try { const k = JSON.parse(localStorage.getItem(KEEP) || '{}'); st.view = k.view || 'gantt'; st.level = k.level || 'task'; st.prefs = k.prefs || {} } catch { st.prefs = {} }
+  try { const k = JSON.parse(localStorage.getItem(KEEP) || '{}'); st.view = k.view || 'gantt'; st.level = k.level || 'task'; st.prefs = k.prefs || {}; st.owner = k.owner || '' } catch { st.prefs = {} }
   await wasm_bindgen(boot.mode === 'live' ? { module_or_path: '/pkg/plan_web_bg.wasm' } : { module_or_path: Uint8Array.from(atob(boot.wasm), c => c.charCodeAt(0)) });
 
   const fmt = (r: number | string) => String(Number(r));
   const key = () => `${st.s}|${fmt(st.r)}|${st.e}`;
-  const save = () => { try { if (st.epic) st.prefs[st.epic] = { s: st.s, r: st.r, e: st.e }; localStorage.setItem(KEEP, JSON.stringify({ view: st.view, level: st.level, prefs: st.prefs })) } catch { } };
+  const save = () => { try { if (st.epic) st.prefs[st.epic] = { s: st.s, r: st.r, e: st.e }; localStorage.setItem(KEEP, JSON.stringify({ view: st.view, level: st.level, prefs: st.prefs, owner: st.owner })) } catch { } };
   const api = async <T = unknown>(path: string, body?: unknown): Promise<ApiRes<T>> => (await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) })).json();
   // Other epics' loads (people across epics); see loadOthers
   let others: EpicLoad[] = [];
@@ -44,11 +46,17 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     $('app-epic').hidden = true; $('app-help').hidden = true; $('app-home').hidden = false;
     document.title = 'Epics';
     const res: ApiRes<EpicSummary[]> = LIVE ? await api<EpicSummary[]>('/api/epics') : { ok: true, data: [] };
-    const list = res.ok ? res.data : [];
+    const all = res.ok ? res.data : [];
+    const names = [...new Set(all.flatMap(x => [...(x.owners || []), ...(x.people || [])]))].sort();
+    if (st.owner && !names.includes(st.owner)) st.owner = '';
+    const list = st.owner ? all.filter(x => (x.owners || []).includes(st.owner) || (x.people || []).includes(st.owner)) : all;
+    const filter = names.length ? `<label class="field home-filter">Owner<select id="home-owner"><option value="">Everyone</option>${names.map(n => `<option ${n === st.owner ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>` : '';
     const I = (k: string) => `<svg class="ico"><use href="#i-${k}"/></svg>`;
-    $('home-list').innerHTML = list.length ? `<table><thead><tr><th>Epic</th><th>Key</th><th>Owners</th><th>Start</th><th>Deadline</th><th>${I('story')}</th><th>${I('task')}</th><th>Scenarios</th></tr></thead><tbody>` +
+    $('home-list').innerHTML = filter + (list.length ? `<table><thead><tr><th>Epic</th><th>Key</th><th>Owners</th><th>Start</th><th>Deadline</th><th>${I('story')}</th><th>${I('task')}</th><th>Scenarios</th></tr></thead><tbody>` +
       list.map(x => `<tr data-k="${esc(x.key)}"><td>${I('epic')} ${esc(x.name)}</td><td class="n">${esc(x.key)}</td><td>${esc((x.owners || []).join(', '))}</td><td class="n">${mdw(x.start)}</td><td class="n">${x.deadline ? mdw(x.deadline) : ''}</td><td class="n">${x.stories}</td><td class="n">${x.tasks}</td><td class="n">${x.scenarios}</td></tr>`).join('') + '</tbody></table>'
-      : '<p class="empty">No epics yet</p>';
+      : `<p class="empty">${all.length ? 'No epics for ' + esc(st.owner) : 'No epics yet'}</p>`);
+    const ho = document.getElementById('home-owner') as HTMLSelectElement | null;
+    if (ho) ho.onchange = () => { st.owner = ho.value; save(); home() };
     $('home-list').querySelectorAll<HTMLElement>('tr[data-k]').forEach(tr => tr.onclick = () => location.hash = '#/e/' + encodeURIComponent(tr.dataset.k!));
     $<HTMLInputElement>('new-start').value ||= new Date().toISOString().slice(0, 10);
   }
@@ -148,16 +156,20 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
 
   // ---------- Top controls ----------
   const EST: Record<EstKind, string> = { o: 'Optimistic', m: 'Most likely', e: 'Expected (PERT)', p: 'Pessimistic' };
-  function sel(name: 's' | 'r' | 'e', label: string, items: [string, string][], cur: string, title: string) {
+  function sel(name: 's' | 'r' | 'e' | 'o', label: string, items: [string, string][], cur: string, title: string) {
     return `<label class="field" title="${esc(title)}">${label}<select data-k="${name}">${items.map(([v, l]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   }
+  // People in this epic (its owners and its tasks' owners), and the owner filter if that person is one of them
+  const people = () => [...new Set([...plan.owners, ...ev.runs[0].tasks.flatMap(t => t.owners)])].sort();
+  const owner = () => (st.owner && people().includes(st.owner) ? st.owner : '');
   function controls() {
     document.title = ev.title; $('title').textContent = ev.title;
     $('controls').innerHTML = (hasScenarios() ? sel('s', 'Scenario', ev.scenarios.map(s => [s.key, s.name]), st.s, 'Scenario of this epic') : '') +
       (LIVE ? `<button class="icon-btn icon-only" id="clone" title="Duplicate scenario" aria-label="Duplicate scenario"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>` : '') +
       sel('r', 'Utilization', ev.rates.map(r => [fmt(r), pct(r)]), fmt(st.r), "Share of each person's day spent on this epic") +
-      sel('e', 'Estimate', ev.estimates.map(e => [e, EST[e]]), st.e, 'Which estimate to use');
-    $('controls').querySelectorAll('select').forEach(b => b.onchange = () => { const k = b.dataset.k as 's' | 'r' | 'e'; if (k === 'e') st.e = b.value as EstKind; else st[k] = b.value; st.sel = null; save(); render() });
+      sel('e', 'Estimate', ev.estimates.map(e => [e, EST[e]]), st.e, 'Which estimate to use') +
+      (people().length ? sel('o', 'Owner', [['', 'Everyone'], ...people().map((n): [string, string] => [n, n])], owner(), 'Show only the tasks of this person (the schedule stays as computed for everyone)') : '');
+    $('controls').querySelectorAll('select').forEach(b => b.onchange = () => { const k = b.dataset.k as 's' | 'r' | 'e' | 'o'; if (k === 'e') st.e = b.value as EstKind; else if (k === 'o') st.owner = b.value; else st[k] = b.value; st.sel = null; save(); render() });
     if ($('clone')) $('clone').onclick = async () => {
       const n = (plan.scenarios.length || 0) + 1, k = 's' + n + '-' + Date.now().toString(36).slice(-3);
       const from = hasScenarios() ? st.s : undefined;
@@ -314,7 +326,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
       link: (from, to) => { const t = cur.tasks.find(x => x.id === to); if (t && !t.after.includes(from)) setTask(to, { after: [...t.after, from] }) },
       change, commit, current: id => curRun().tasks.find(t => t.id === id),
       pickRun: (s, r) => { st.s = s; st.r = fmt(r); st.view = 'gantt'; save(); render() },
-      dragged: false, others,
+      dragged: false, others, owner: owner() || null,
     };
     (P.views[st.view] || P.views.gantt)($('view'), ctx);
   }
