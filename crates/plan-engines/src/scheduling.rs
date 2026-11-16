@@ -106,13 +106,18 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
         m
     }).collect();
     let limit = cal.days.len() * 2;
+    if let Some(k) = (0..n).find(|&k| dur[k] > limit) {
+        return Err(Issue::error(format!("longer than the calendar ({} business days)", cal.days.len())).at(None, Some(&tasks[k].id)));
+    }
 
-    let run = |delay: Option<(usize, usize)>| -> (Vec<usize>, Vec<usize>, Vec<String>, usize) {
+    // The last value is the first task that ran past the end of the calendar, if any
+    let run = |delay: Option<(usize, usize)>| -> (Vec<usize>, Vec<usize>, Vec<String>, usize, Option<usize>) {
         let mut busy: Vec<HashMap<usize, usize>> = vec![HashMap::new(); owners.len()];
         let mut s_es = vec![0usize; n];
         let mut s_ef = vec![0usize; n];
         let mut why = vec![String::new(); n];
         let mut placed = vec![false; n];
+        let mut past = None;
         for _ in 0..n {
             let k = (0..n).filter(|&c| !placed[c] && preds[c].iter().all(|&p| placed[p]))
                 .min_by_key(|&c| (ls[c], es[c], pos[c])).unwrap();
@@ -145,21 +150,26 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
                     Some(h) => { s = x + 1; reason = h; }
                 }
             };
+            if used.len() < dur[k] && past.is_none() { past = Some(k); }
             for &x in &used { for &o in &towners[k] { busy[o].insert(x, k); } }
             s_es[k] = used.first().copied().unwrap_or(s);
             s_ef[k] = used.last().map(|x| x + 1).unwrap_or(s);
             why[k] = reason;
         }
         let end = s_ef.iter().copied().max().unwrap_or(cal.start_slot);
-        (s_es, s_ef, why, end)
+        (s_es, s_ef, why, end, past)
     };
 
-    let (bes, bef, bwhy, bend) = run(None);
+    let (bes, bef, bwhy, bend, past) = run(None);
+    if let Some(k) = past {
+        return Err(Issue::error(format!("runs past the end of the calendar ({} business days)", cal.days.len())).at(None, Some(&tasks[k].id)));
+    }
     let mut tf = vec![None; n];
     for k in 0..n {
         if tasks[k].kind == Kind::Done { continue; }
         // delay from where the task was placed, not from its earliest start: a task pushed back by a freeze or a busy owner has no float hidden in that push
-        let moves = |d: usize| run(Some((k, bes[k] + d))).3 != bend;
+        // running past the calendar counts as moving the end
+        let moves = |d: usize| { let r = run(Some((k, bes[k] + d))); r.3 != bend || r.4.is_some() };
         if moves(1) { tf[k] = Some(0); continue; }
         let cap = 240;
         let (mut lo, mut hi) = (1usize, 2usize);
@@ -174,4 +184,47 @@ pub fn schedule(tasks: &[Task], cal: &BusinessCalendar, changes: &[Change]) -> R
         Some(nxt.saturating_sub(bef[k]))
     }).collect();
     Ok(Schedule { order, es: bes, ef: bef, tf, ff, why: bwhy, end: bend, reduced_after: reduce(tasks) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plan_contracts::{BusinessCalendar, Change, Kind, Task};
+
+    fn cal(days: usize) -> BusinessCalendar {
+        let d0 = chrono::NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+        BusinessCalendar { days: (0..days as i64).map(|i| d0 + chrono::Duration::days(i)).collect(), start_slot: 0, blocked: Default::default(), leave: Default::default(), off: vec![] }
+    }
+    fn work(id: &str, dur: usize, after: &[&str]) -> Task {
+        Task { id: id.into(), kind: Kind::Work, dur, val: dur as f64 / 2.0, owners: vec!["a".into()], after: after.iter().map(|s| s.to_string()).collect(), needs: vec![], not_before: None, fixed: None }
+    }
+
+    #[test]
+    fn fits_the_calendar() {
+        let s = schedule(&[work("A", 4, &[]), work("B", 2, &["A"])], &cal(10), &[]).unwrap();
+        assert_eq!((s.es, s.ef, s.end), (vec![0, 4], vec![4, 6], 6));
+        assert_eq!(s.tf, vec![Some(0), Some(0)]);
+    }
+
+    #[test]
+    fn a_duration_longer_than_the_calendar_is_an_error() {
+        let ch = Change { id: "A".into(), dur: Some(1 << 62), ..Default::default() };
+        let e = schedule(&[work("A", 4, &[])], &cal(10), &[ch]).unwrap_err();
+        assert_eq!(e.task.as_deref(), Some("A"), "{e:?}");
+    }
+
+    #[test]
+    fn a_task_running_past_the_calendar_is_an_error() {
+        // each fits alone (20 slots), but B starts after A and cannot finish
+        let e = schedule(&[work("A", 12, &[]), work("B", 12, &["A"])], &cal(10), &[]).unwrap_err();
+        assert_eq!(e.task.as_deref(), Some("B"), "{e:?}");
+        assert!(e.message.contains("past the end of the calendar"), "{e:?}");
+    }
+
+    #[test]
+    fn delay_tests_near_the_end_of_the_calendar_do_not_hide_float() {
+        // A has no float: any delay pushes B past the calendar
+        let s = schedule(&[work("A", 10, &[]), work("B", 10, &["A"])], &cal(10), &[]).unwrap();
+        assert_eq!(s.tf, vec![Some(0), Some(0)]);
+    }
 }

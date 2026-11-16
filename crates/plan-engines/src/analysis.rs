@@ -79,6 +79,11 @@ pub fn bdays_between(cal: &BusinessCalendar, a: chrono::NaiveDate, b: chrono::Na
 /// Lint the plan (errors and warnings)
 pub fn inspect(plan: &Plan, scenarios: &[Scenario]) -> Vec<Issue> {
     let mut out: Vec<Issue> = plan.unknown_keys.iter().map(|k| Issue::warning(format!("unknown key {k}"))).collect();
+    let bad_rate = |r: f64| !(r.is_finite() && r > 0.0);
+    for r in plan.rates.iter().copied().filter(|&r| bad_rate(r)) { out.push(Issue::error(format!("rates: {} is not a number > 0", fmt_num(r)))); }
+    for (name, p) in &plan.people {
+        if let Some(r) = p.rate.filter(|&r| bad_rate(r)) { out.push(Issue::error(format!("rate of {name}: {} is not a number > 0", fmt_num(r)))); }
+    }
     for sc in scenarios {
         let sk = Some(sc.key.as_str());
         let ids: Vec<&str> = sc.tasks.iter().map(|t| t.id.as_str()).collect();
