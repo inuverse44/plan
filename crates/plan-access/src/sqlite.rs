@@ -51,12 +51,30 @@ fn d(s: Option<String>) -> Option<NaiveDate> { s.and_then(|x| NaiveDate::parse_f
 fn est_to(e: &Option<Estimate>) -> Option<String> {
     e.as_ref().map(|e| match e { Estimate::One(v) => fmt_num(*v), Estimate::Three(o, m, p) => format!("[{}, {}, {}]", fmt_num(*o), fmt_num(*m), fmt_num(*p)) })
 }
-fn est_from(s: Option<String>) -> Option<Estimate> {
-    let s = s?;
-    let v: serde_json::Value = serde_json::from_str(&s).ok()?;
+fn est_parse(s: &str) -> Option<Estimate> {
+    let v: serde_json::Value = serde_json::from_str(s).ok()?;
     if let Some(x) = v.as_f64() { return Some(Estimate::One(x)); }
-    let a: Vec<f64> = v.as_array()?.iter().filter_map(|x| x.as_f64()).collect();
+    let a: Vec<f64> = v.as_array()?.iter().map(serde_json::Value::as_f64).collect::<Option<_>>()?;
     (a.len() == 3).then(|| Estimate::Three(a[0], a[1], a[2]))
+}
+
+// Reading a plan that will be written back (apply deletes the epic's rows and inserts the plan it read):
+// a value that cannot be read is an error, never a silent default, or the next edit would erase it
+
+fn bad(col: usize, msg: String) -> rusqlite::Error {
+    rusqlite::Error::FromSqlConversionFailure(col, rusqlite::types::Type::Text, msg.into())
+}
+fn est_col(r: &rusqlite::Row, col: usize) -> rusqlite::Result<Option<Estimate>> {
+    r.get::<_, Option<String>>(col)?.map(|s| est_parse(&s).ok_or_else(|| bad(col, format!("not an estimate: {s}")))).transpose()
+}
+fn date_col(r: &rusqlite::Row, col: usize) -> rusqlite::Result<Option<NaiveDate>> {
+    r.get::<_, Option<String>>(col)?.map(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").map_err(|x| bad(col, format!("not a date: {s} ({x})")))).transpose()
+}
+fn json_col<T: serde::de::DeserializeOwned>(r: &rusqlite::Row, col: usize) -> rusqlite::Result<Option<T>> {
+    r.get::<_, Option<String>>(col)?.map(|s| serde_json::from_str(&s).map_err(|x| bad(col, format!("not valid JSON: {s} ({x})")))).transpose()
+}
+fn json_text<T: serde::de::DeserializeOwned>(what: &str, s: &str) -> Result<T, Vec<Issue>> {
+    serde_json::from_str(s).map_err(|x| e(format!("{what} is not valid JSON: {s} ({x})")))
 }
 
 impl SqlitePlans {
@@ -109,10 +127,10 @@ impl SqlitePlans {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?, r.get::<_, f64>(9)?, r.get::<_, Option<String>>(10)?, r.get::<_, f64>(11)?, r.get::<_, f64>(12)?))
         }).optional().map_err(e)?.ok_or_else(|| vec![Issue::error(format!("no epic {epic}"))])?;
-        let owners: Vec<String> = serde_json::from_str(&c.query_row("SELECT owners FROM epics WHERE key=?", [epic], |r| r.get::<_, String>(0)).map_err(e)?).unwrap_or_default();
+        let owners: Vec<String> = json_text("epics.owners", &c.query_row("SELECT owners FROM epics WHERE key=?", [epic], |r| r.get::<_, String>(0)).map_err(e)?)?;
         let (calendar, people, resources) = Self::common(c).map_err(e)?;
         let stories = c.prepare("SELECT key, name, purpose, dod FROM stories WHERE epic=? ORDER BY sort").map_err(e)?
-            .query_map([epic], |r| Ok(Story { key: r.get(0)?, name: r.get(1)?, purpose: r.get(2)?, dod: r.get(3)? })).map_err(e)?.filter_map(|x| x.ok()).collect();
+            .query_map([epic], |r| Ok(Story { key: r.get(0)?, name: r.get(1)?, purpose: r.get(2)?, dod: r.get(3)? })).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(|x| e(format!("stories of {epic}: {x}")))?;
         let mut deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for x in c.prepare("SELECT task, pred FROM deps WHERE epic=? ORDER BY sort").map_err(e)?.query_map([epic], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)? {
             let (t, p) = x.map_err(e)?; deps.entry(t).or_default().push(p);
@@ -122,26 +140,26 @@ impl SqlitePlans {
                 let id: String = r.get(0)?;
                 Ok(TaskSpec {
                     after: deps.get(&id).cloned().unwrap_or_default(), story: r.get(1)?, name: r.get(2)?, short: r.get(3)?, ticket: r.get(4)?, deliverable: r.get(5)?,
-                    group: r.get(6)?, note: r.get(7)?, effort: est_from(r.get(8)?), wait: est_from(r.get(9)?),
-                    owners: r.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()),
-                    needs: r.get::<_, Option<String>>(11)?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(), prod: false,
-                    not_before: d(r.get(12)?), fixed: d(r.get(13)?), done: r.get(14)?, actual_start: d(r.get(15)?), actual_finish: d(r.get(16)?), unknown_keys: vec![], id,
+                    group: r.get(6)?, note: r.get(7)?, effort: est_col(r, 8)?, wait: est_col(r, 9)?,
+                    owners: json_col(r, 10)?, needs: json_col(r, 11)?.unwrap_or_default(), prod: false,
+                    not_before: date_col(r, 12)?, fixed: date_col(r, 13)?, done: r.get(14)?, actual_start: date_col(r, 15)?, actual_finish: date_col(r, 16)?, unknown_keys: vec![], id,
                 })
-            }).map_err(e)?.filter_map(|x| x.ok()).collect();
+            }).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(|x| e(format!("tasks of {epic}: {x}")))?;
         let scenarios = c.prepare("SELECT key, name, note, drop_tasks, sets, adds FROM scenarios WHERE epic=? ORDER BY sort").map_err(e)?
             .query_map([epic], |r| Ok(ScenarioSpec {
                 key: r.get(0)?, name: r.get(1)?, note: r.get(2)?,
-                drop: serde_json::from_str(&r.get::<_, String>(3)?).unwrap_or_default(),
-                set: serde_json::from_str(&r.get::<_, String>(4)?).unwrap_or_default(),
-                add: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
-            })).map_err(e)?.filter_map(|x| x.ok()).collect();
+                drop: json_col(r, 3)?.unwrap_or_default(),
+                set: json_col(r, 4)?.unwrap_or_default(),
+                add: json_col(r, 5)?.unwrap_or_default(),
+            })).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(|x| e(format!("scenarios of {epic}: {x}")))?;
         let comments = c.prepare("SELECT id, target, at, by, text FROM comments WHERE epic=? ORDER BY id").map_err(e)?
-            .query_map([epic], |r| Ok(Comment { id: r.get(0)?, target: r.get(1)?, at: r.get(2)?, by: r.get(3)?, text: r.get(4)? })).map_err(e)?.filter_map(|x| x.ok()).collect();
+            .query_map([epic], |r| Ok(Comment { id: r.get(0)?, target: r.get(1)?, at: r.get(2)?, by: r.get(3)?, text: r.get(4)? })).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(|x| e(format!("comments of {epic}: {x}")))?;
         let (name, description, start, start_pm, deadline, deadline_task, deadline_label, rates, ests, round, default_owner, red, yellow) = row;
         Ok(Plan {
             key: epic.to_string(), title: name, description, start: d(Some(start)).ok_or_else(|| vec![Issue::error("start is not a date")])?, start_pm,
-            deadline: d(deadline), deadline_task, deadline_label, rates: serde_json::from_str(&rates).unwrap_or(vec![1.0]),
-            estimates: serde_json::from_str::<Vec<String>>(&ests).unwrap_or_default().iter().filter_map(|x| EstKind::parse(x)).collect(),
+            deadline: deadline.map(|x| d(Some(x.clone())).ok_or_else(|| e(format!("deadline is not a date: {x}")))).transpose()?, deadline_task, deadline_label,
+            rates: json_text("epics.rates", &rates)?,
+            estimates: json_text::<Vec<String>>("epics.estimates", &ests)?.iter().map(|x| EstKind::parse(x).ok_or_else(|| e(format!("unknown estimate kind {x}")))).collect::<Result<_, _>>()?,
             round, default_owner, owners, calendar, colors: Colors { red, yellow }, people, resources, stories, tasks, scenarios, comments, unknown_keys: vec![],
         })
     }
@@ -238,7 +256,7 @@ impl PlanAccess for SqlitePlans {
     }
 
     fn import(&self, plan: &Plan, actor: &str) -> Result<(), Vec<Issue>> {
-        if plan.key.is_empty() { return Err(vec![Issue::error("the imported plan has no key")]); }
+        if plan.key.is_empty() || plan.key.contains(|c: char| c.is_whitespace() || c == '/') { return Err(vec![Issue::error("the key must not be empty or contain spaces or /")]); }
         let mut c = self.conn.lock().unwrap();
         let tx = c.transaction().map_err(e)?;
         // Merge the shared calendar and people (do not remove other epics' entries)
