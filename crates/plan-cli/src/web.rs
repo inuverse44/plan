@@ -1,8 +1,8 @@
-//! WebClient の入れ物：画面のファイル（web/）をバイナリに埋め込み、手元のサーバー用と書き出し用の HTML を作る
+//! Home of the web client: embeds the UI files (web/) in the binary and builds the HTML for the server and for export
 use base64::Engine;
 
 pub const INDEX: &str = include_str!("../../../web/index.html");
-/// 読む順に並べる（後のファイルが前のファイルの関数を使う）
+/// In load order (later files use functions from earlier ones)
 pub const SCRIPTS: &[(&str, &str)] = &[
     ("pkg/plan_web.js", include_str!("../../../web/pkg/plan_web.js")),
     ("ui/core.js", include_str!("../../../web/ui/core.js")),

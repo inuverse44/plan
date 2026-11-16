@@ -1,19 +1,19 @@
-//! 手元のサーバー（WebClient の入れ物）。計算は画面の WASM がする。ここは HTTP の API で PlanEditingManager を呼ぶ
+//! The HTTP server (home of the web client). The UI computes in WASM; this server exposes PlanEditingManager over HTTP.
 //!
-//!   GET  /api/version                     変わったら増える数
-//!   GET  /api/epics                       エピックの一覧
+//!   GET  /api/version                     a number that grows on every change
+//!   GET  /api/epics                       list of epics
 //!   POST /api/epics          {key,name,start}
-//!   GET  /api/epic/KEY                    エピック 1 つ分の計画（JSON）
+//!   GET  /api/epic/KEY                    one epic's plan (JSON)
 //!   POST /api/epic/KEY/ops   {ops:[EditOp]}
-//!   POST /api/epic/KEY/save  {scenario,rate,est,changes}   動かしてみた変更を計画に書く
+//!   POST /api/epic/KEY/save  {scenario,rate,est,changes}   write moves tried in the UI into the plan
 //!   POST /api/epic/KEY/delete
 //!   GET  /api/epic/KEY/history
 //!   GET  /api/history?epic=KEY&limit=N
-//!   POST /api/import         {plan}                   計画をまるごと入れる（plan push）
-//!   書く API は actor（cli・web）を受ける。無ければ web
+//!   POST /api/import         {plan}                   replace a whole plan (plan push)
+//!   Writing endpoints accept an actor (cli, web); the default is web
 //!
-//! 置き場は PLAN_STORE=firestore:PROJECT なら Firestore、無ければ手元の SQLite。
-//! Cloud Run（PORT がある）では 0.0.0.0:PORT で待ち、使わなくても止めない（止めるのは Cloud Run）
+//! The store is Firestore with PLAN_STORE=firestore:PROJECT, otherwise the local SQLite.
+//! On Cloud Run (PORT is set) it listens on 0.0.0.0:PORT and never exits on idle (Cloud Run scales it down)
 use crate::web;
 use plan_access::{on_cloud_run, FirestorePlans, JpRuleCalendar, PlanAccess, TokenSource, Tokens};
 use plan_contracts::{Change, EditOp, EstKind, Issue};
@@ -29,7 +29,7 @@ fn reply(req: tiny_http::Request, ctype: &str, body: Vec<u8>) {
     let r = Response::from_data(body)
         .with_header(Header::from_bytes("Content-Type", ctype).unwrap())
         .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
-        // 接続を持ち続けない（Chrome の 1 サーバー 6 本の上限を埋めて、画面が読み込み中のままになった。2026-11-16）
+        // Do not keep connections open: they filled Chrome's limit of 6 per host and the UI hung while loading
         .with_header(Header::from_bytes("Connection", "close").unwrap());
     let _ = req.respond(r);
 }
@@ -53,9 +53,9 @@ pub fn run(port: u16, open: bool) {
     let ed = PlanEditingManager::new(st.clone());
     let pm = PlanningManager::new(st.clone(), Arc::new(JpRuleCalendar));
     let cloud = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok());
-    let server = match cloud { Some(p) => Server::http(("0.0.0.0", p)), None => Server::http(("127.0.0.1", port)) }.expect("ポートを開けない");
+    let server = match cloud { Some(p) => Server::http(("0.0.0.0", p)), None => Server::http(("127.0.0.1", port)) }.expect("cannot open the port");
     let url = format!("http://{}/", server.server_addr().to_ip().unwrap());
-    println!("{url} で待つ（置き場：{place}{}）", if cloud.is_some() { "" } else { "。30 分使わなければ止まる" });
+    println!("listening on {url} (store: {place}{})", if cloud.is_some() { "" } else { "; stops after 30 idle minutes" });
     if open && cloud.is_none() { let _ = std::process::Command::new("open").arg(&url).status(); }
     let last = Arc::new(AtomicU64::new(0));
     let start = Instant::now();
@@ -79,7 +79,7 @@ pub fn run(port: u16, open: bool) {
             (Method::Get, ["api", "epics"]) => result(req, ed.epics().map(|v| serde_json::to_value(v).unwrap())),
             (Method::Post, ["api", "epics"]) => {
                 let r = (|| {
-                    let start = b["start"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).ok_or_else(|| vec![Issue::error("開始日は YYYY-MM-DD")])?;
+                    let start = b["start"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).ok_or_else(|| vec![Issue::error("start must be YYYY-MM-DD")])?;
                     ed.create_epic(b["key"].as_str().unwrap_or(""), b["name"].as_str().unwrap_or(""), start, &actor).map(|_| serde_json::json!({}))
                 })();
                 result(req, r)
@@ -87,7 +87,7 @@ pub fn run(port: u16, open: bool) {
             (Method::Get, ["api", "epic", k]) => result(req, ed.plan(&decode(k)).map(|p| serde_json::json!({ "version": st.version(), "plan": p }))),
             (Method::Get, ["api", "epic", k, "history"]) => result(req, ed.history(Some(&decode(k)), 100).map(|h| serde_json::to_value(h).unwrap())),
             (Method::Post, ["api", "epic", k, "ops"]) => {
-                let r = serde_json::from_value::<Vec<EditOp>>(b["ops"].clone()).map_err(|e| vec![Issue::error(format!("編集の形が違う：{e}"))])
+                let r = serde_json::from_value::<Vec<EditOp>>(b["ops"].clone()).map_err(|e| vec![Issue::error(format!("invalid edits: {e}"))])
                     .and_then(|ops| ed.apply(&decode(k), &actor, &ops)).map(|_| serde_json::json!({}));
                 result(req, r)
             }
@@ -106,7 +106,7 @@ pub fn run(port: u16, open: bool) {
                 result(req, ed.history(qp("epic").as_deref(), lim).map(|h| serde_json::to_value(h).unwrap()))
             }
             (Method::Post, ["api", "import"]) => {
-                let r = serde_json::from_value::<plan_contracts::Plan>(b["plan"].clone()).map_err(|e| vec![Issue::error(format!("計画の形が違う：{e}"))])
+                let r = serde_json::from_value::<plan_contracts::Plan>(b["plan"].clone()).map_err(|e| vec![Issue::error(format!("invalid plan: {e}"))])
                     .and_then(|p| st.import(&p, &actor).map(|_| serde_json::json!({ "epic": p.key })));
                 result(req, r)
             }
