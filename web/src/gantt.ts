@@ -6,7 +6,7 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   const t0 = D(acts.length && acts[0] < cal.days[cal.start_slot >> 1] ? acts[0] : cal.days[cal.start_slot >> 1]);
   let last = S.end(Math.max(run.end, base.end)); if (S.ev.deadline && S.ev.deadline > last) last = S.ev.deadline;
   const nd = Math.round((D(last).getTime() - t0.getTime()) / 864e5) + 6;
-  const lw = 220, rh = 32, top = 30;
+  const lw = 300, ow = 228, rh = 32, top = 30; // ow: x of the owner column inside the label area
   const avail = Math.max(640, el.clientWidth - 26);
   const dw = Math.max(14, Math.min(36, (avail - lw) / nd));
   const W = lw + nd * dw + 30, H = top + nrows * rh + 8;
@@ -19,6 +19,7 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   <marker id="ga" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--muted')}"/></marker>
   <marker id="gh" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--accent')}"/></marker></defs>`;
   for (const [n, r] of Object.entries(S.ev.resources)) for (const [a, b] of r.off) { const x1 = Math.max(lw, xd(a)), x2 = Math.min(W, xd(b) + dw); if (x2 > x1) head += `<rect x="${x1}" y="${top - 4}" width="${x2 - x1}" height="${H - top}" fill="${css('--freeze')}"><title>${P.esc(r.label || n)}: ${P.esc(n)} unavailable</title></rect>` }
+  head += `<text x="${ow}" y="${top - 12}" font-size="11" style="fill:${css('--muted')}">Owner</text>`;
   for (let i = 0; i < nd; i++) {
     const d = new Date(t0.getTime() + i * 864e5), w = d.getDay(), x = lw + i * dw;
     if (w === 0 || w === 6 || off.has(iso(d))) head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top}" fill="${css('--faint')}"/>`;
@@ -29,7 +30,14 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"><title>Deadline ${mdw(S.ev.deadline)}</title></line>` }
   // Bar extent: actual dates for done tasks that have them, otherwise the computed half-days
   const bx = (t: TaskView): [number, number] => t.kind === 'done' && t.actual_start ? [xd(t.actual_start), xd(t.actual_finish || t.actual_start) + dw] : [xs(t.es), xe(t.ef > t.es ? t.ef : t.es + 1)];
-  return { t0, nd, lw, rh, top, dw, W, H, xd, xs, xe, bx, last, head };
+  return { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head };
+}
+
+// Owner column: names joined, shortened to fit; the full list in the tooltip
+function ownerCell(owners: string[], x: number, y: number) {
+  if (!owners.length) return '';
+  const o = owners.join(', ');
+  return `<text x="${x}" y="${y + 21}" font-size="12" style="fill:${P.css('--muted')}">${P.esc(o.length > 6 ? o.slice(0, 5) + '…' : o)}<title>${P.esc(o)}</title></text>`;
 }
 
 // Stories / Tasks switch (top left of the Gantt)
@@ -55,7 +63,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     const fl = mem.filter(t => t.tf != null && t.kind !== 'wait').map(t => t.tf as number);
     return { x1: Math.min(...xs2.map(v => v[0])), x2: Math.max(...xs2.map(v => v[1])), n: all.length, done: all.length - mem.length, color: (worst || 'done') as FloatColor, minf: fl.length ? Math.min(...fl) / 2 : null };
   };
-  const { lw, rh, top, W, xs, xe, bx, head } = ganttFrame(el, ctx, groups.length);
+  const { lw, ow, rh, top, W, xs, xe, bx, head } = ganttFrame(el, ctx, groups.length);
   let s = head;
   const ry = (i: number) => top + i * rh;
   // Story dependencies: one line per pair of stories that have any task dependency between them
@@ -76,6 +84,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     if (sel) bars += `<rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
     bars += `<g class="story-row" data-story="${esc(g.key)}">` + (g.key ? P.ICON('story', 6, y + 8) : '') +
       `<text x="${g.key ? 28 : 8}" y="${y + 21}" font-size="13" font-weight="600" style="${g.key ? '' : `fill:${css('--muted')}`}">${esc(g.name.slice(0, 15))}<title>${esc(g.name)}</title></text>`;
+    bars += ownerCell([...new Set(run.tasks.filter(t => groupOf(t) === g.key).flatMap(t => t.owners))], ow, y);
     if (sp) {
       const x1 = sp.x1, w = Math.max(6, sp.x2 - x1), crit = sp.color === 'crit';
       if (b0 && (b0.x1 !== sp.x1 || b0.x2 !== sp.x2)) bars += `<rect x="${b0.x1}" y="${y + 7}" width="${Math.max(3, b0.x2 - b0.x1)}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
@@ -113,7 +122,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   }
   for (const x of stories) if (!ids.some(id => B[id].story === x.key)) rows.push({ story: x.key });
   const K = P.index(run);
-  const { t0, nd, lw, rh, top, dw, W, H, xd, xs, xe, bx, last, head } = ganttFrame(el, ctx, rows.length);
+  const { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head } = ganttFrame(el, ctx, rows.length);
   let s = head;
   const ry = (id: string) => top + rows.indexOf(id) * rh;
   const taskRows = rows.filter((r): r is string => typeof r === 'string');
@@ -149,6 +158,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     bars += `<g data-id="${k}" opacity="${dim ? .25 : 1}">`;
     const ind = t.story && sIdx[t.story] != null ? 14 : 0;
     bars += P.ICON('task', 6 + ind, y + 9, 14) + `<text x="${26 + ind}" y="${y + 21}" font-size="13" font-weight="${crit ? 600 : 400}" style="cursor:pointer">${esc((t.short || t.name).slice(0, 14))}<title>${esc(tip)}</title></text>`;
+    bars += ownerCell(t.owners, ow, y);
     bars += P.NEEDS(t.needs, lw - 12, y + 16);
     if (b.es !== t.es || b.ef !== t.ef) bars += `<rect x="${xs(b.es)}" y="${y + 7}" width="${Math.max(3, xe(b.ef) - xs(b.es))}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
     if (t.kind === 'milestone') {
