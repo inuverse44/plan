@@ -82,6 +82,7 @@ plan1 · 1.0 · e: target 2026-12-17 → 2027-01-20, finish 2026-12-22 → 2027-
 |---|---|
 | `epics`, `dump`, `show`, `calc`, `why`, `check`, `log`, `load` | the commands of the same name (read only) |
 | `apply` | `plan apply` (all edits or none). The history records them as `mcp` |
+| `delete_epic` | `plan epic rm` (its content stays in the history) |
 
 ```sh
 claude mcp add plan --scope user -- /path/to/plan mcp     # Claude Code

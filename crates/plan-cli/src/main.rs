@@ -8,7 +8,7 @@
 //!   batch   plan apply E ops.json ("-" for stdin)  apply a list of edits at once; any error writes nothing
 //!   machine every command accepts --json and returns {"ok":true,"data":…} or {"ok":false,"issues":[…]}
 //!   ui      plan serve [--port N] [--no-open] | export E [out.html]
-//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load apply) for AI assistants
+//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load apply delete_epic) for AI assistants
 //!   k=v     name short story ticket deliverable note owner=a,b after=a,b needs=prod,db effort=1 or 1,2,4 wait=2 not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
 //!   E may be a path to a .toml file: the file is read directly, without the DB
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local

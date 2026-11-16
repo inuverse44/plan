@@ -55,6 +55,9 @@ pub fn tools() -> Value {
           "inputSchema": schema(json!({ "epic": { "type": "string", "description": "only this epic (default: all)" }, "limit": { "type": "integer", "description": "default 50" } }), &[]), "annotations": ro },
         { "name": "load", "description": "People across epics: each epic's default run (first scenario, first utilization, e) added up per person and day (1 = one person's whole day). Lists the days over 100% with the share of each epic. Epics are still scheduled on their own; this only adds the loads up.",
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "only this person (default: everyone)" } }), &[]), "annotations": ro },
+        { "name": "delete_epic", "description": "Delete a whole epic (its stories, tasks and scenarios). Its content stays in the change history (log). Ask the person before using it.",
+          "inputSchema": schema(json!({ "epic": { "type": "string", "description": "the epic key" } }), &["epic"]),
+          "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true } },
         { "name": "apply", "description": APPLY_HELP,
           "inputSchema": schema(json!({ "epic": { "type": "string", "description": "the epic key" }, "ops": { "type": "array", "items": { "type": "object" }, "description": "the edits, in order" } }), &["epic", "ops"]),
           "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": false } }
@@ -83,6 +86,11 @@ pub fn call(name: &str, args: &Value) -> Result<Value, Vec<Issue>> {
                 .map_err(|x| vec![Issue::error(format!("ops must be a list of edits: {x}"))])?;
             crate::apply_data(need("epic")?, "mcp", &ops)
         }
+        "delete_epic" => {
+            let k = need("epic")?;
+            plan_manager::PlanEditingManager::new(crate::store()).delete_epic(k, "mcp")?;
+            Ok(json!({ "deleted": k, "note": "its content stays in the log" }))
+        }
         _ => Err(vec![Issue::error(format!("unknown tool: {name}"))]),
     }
 }
@@ -97,7 +105,7 @@ pub fn handle(msg: &Value) -> Option<Value> {
             "protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or(PROTOCOL),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "plan", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Plans of epics > stories > tasks with dependencies and estimates. Read with epics, dump, show, calc, why, log, load (people across epics); edit with apply (one batch, all or nothing); its result says how the deadline, slack and critical path moved. The tool keeps plans only, not status."
+            "instructions": "Plans of epics > stories > tasks with dependencies and estimates. Read with epics, dump, show, calc, why, log, load (people across epics); edit with apply (one batch, all or nothing), delete_epic removes a whole epic; its result says how the deadline, slack and critical path moved. The tool keeps plans only, not status."
         })),
         "ping" => ok(json!({})),
         "tools/list" => ok(json!({ "tools": tools() })),
@@ -151,7 +159,7 @@ mod tests {
         assert!(r["result"]["capabilities"]["tools"].is_object());
         assert!(handle(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).is_none());
         let names: Vec<String> = rpc("tools/list", json!({}))["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
-        for n in ["epics", "dump", "show", "calc", "why", "check", "log", "load", "apply"] { assert!(names.contains(&n.to_string()), "{n}"); }
+        for n in ["epics", "dump", "show", "calc", "why", "check", "log", "load", "delete_epic", "apply"] { assert!(names.contains(&n.to_string()), "{n}"); }
         assert_eq!(rpc("nope", json!({}))["error"]["code"], -32601);
     }
 
@@ -215,6 +223,13 @@ mod tests {
         assert_eq!(i["before"]["finish"], show["data"]["finish"]);
         assert!(i["after"]["finish"].as_str().unwrap() > i["before"]["finish"].as_str().unwrap(), "{body}");
         assert_eq!(i["after"]["finish"], tool("show", json!({ "epic": "demo" })).1["data"]["finish"]);
+
+        // delete_epic removes the epic; its content stays in the log
+        let (err, body) = tool("delete_epic", json!({ "epic": "demo" }));
+        assert!(!err && body["data"]["deleted"] == "demo", "{body}");
+        assert!(!tool("epics", json!({})).1["data"]["epics"].as_array().unwrap().iter().any(|e| e["key"] == "demo"));
+        assert!(tool("dump", json!({ "epic": "demo" })).0);
+        assert_eq!(tool("log", json!({ "epic": "demo", "limit": 1 })).1["data"][0]["actor"], "mcp");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

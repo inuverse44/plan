@@ -273,7 +273,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
       <div class="row2"><label>Target task<select data-e="deadline_task"><option value="">Finish</option>${plan.tasks.map(t => `<option value="${esc(t.id)}" ${plan.deadline_task === t.id ? 'selected' : ''}>${esc(t.short || t.name)}</option>`).join('')}</select></label>
         <label>Default owner<input data-e="default_owner" value="${esc(plan.default_owner || '')}"></label></div>
       ${sc ? `<label>Scenario name<input data-sc="name" value="${esc(sc.name)}"></label>` : ''}
-    </div>${sc ? `<button class="danger" id="del-sc">Delete scenario</button>` : ''}`;
+    </div>${sc ? `<button class="danger" id="del-sc">Delete scenario</button>` : ''}${LIVE ? `<button class="danger" id="del-epic">Delete epic</button>` : ''}`;
     q(el, '.close').onclick = () => { st.settings = false; render() };
     el.querySelectorAll<HTMLInputElement>('[data-e]').forEach(i => i.onchange = () => {
       const f = i.dataset.e!, v = i.value.trim(), s: Record<string, string | null> = {};
@@ -282,6 +282,17 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     });
     el.querySelectorAll<HTMLInputElement>('[data-sc]').forEach(i => i.onchange = () => edit([{ op: 'set_scenario', key: sc!.key, name: i.value.trim() }]));
     if (sc) $('del-sc').onclick = () => edit([{ op: 'delete_scenario', key: sc.key }]);
+    // Delete the whole epic: a second click within a few seconds confirms (no browser dialog)
+    if (LIVE) {
+      const b = $('del-epic'); let armed = 0;
+      b.onclick = async () => {
+        if (!armed) { b.textContent = `Click again to delete ${plan.key}`; armed = setTimeout(() => { armed = 0; b.textContent = 'Delete epic' }, 4000); return }
+        clearTimeout(armed);
+        const k = plan.key, res = await api('/api/epic/' + encodeURIComponent(k) + '/delete', {});
+        if (!res.ok) { P.toast(issueText(res.issues)); return }
+        st.settings = false; location.hash = '#/'; P.toast(`Deleted ${k} (its content stays in the log)`);
+      };
+    }
   }
 
   // ---------- Render ----------
