@@ -87,16 +87,21 @@ impl PlanningManager {
         let sc = l.scenarios.iter().find(|s| s.key == scenario_key).ok_or_else(|| vec![Issue::error("no such scenario")])?;
         let tasks = estimation::resolve(&l.plan, &sc.tasks, est, rate);
         let base = l.plan.scenarios.is_empty();
-        Ok(changes.iter().filter_map(|c| {
-            let t = tasks.iter().find(|t| t.id == c.id)?;
+        let mut ops = Vec::new();
+        for c in changes {
+            let Some(t) = tasks.iter().find(|t| t.id == c.id) else { continue };
             let mut patch = TaskPatch::default();
-            if let Some(s) = c.min_start { patch.not_before = Some(l.cal.days[s / 2]); }
+            if let Some(s) = c.min_start {
+                let day = l.cal.days.get(s / 2).ok_or_else(|| vec![Issue::error("start is past the calendar").at(Some(scenario_key), Some(&c.id))])?;
+                patch.not_before = Some(*day);
+            }
             if let Some(d) = c.dur {
                 let v = Estimate::One(estimation::effort_for(t, d, rate));
                 if t.kind == Kind::Wait { patch.wait = Some(v) } else { patch.effort = Some(v) }
             }
-            Some(EditOp::SetTask { key: c.id.clone(), patch, scenario: if base { None } else { Some(scenario_key.to_string()) } })
-        }).collect())
+            ops.push(EditOp::SetTask { key: c.id.clone(), patch, scenario: if base { None } else { Some(scenario_key.to_string()) } });
+        }
+        Ok(ops)
     }
 }
 

@@ -212,7 +212,7 @@ impl PlanAccess for FirestorePlans {
     }
 
     fn import(&self, plan: &Plan, actor: &str) -> Result<(), Vec<Issue>> {
-        if plan.key.is_empty() { return Err(e("the imported plan has no key")); }
+        if plan.key.is_empty() || plan.key.contains(|c: char| c.is_whitespace() || c == '/') { return Err(e("the key must not be empty or contain spaces or /")); }
         self.in_tx(|tx| self.write(tx, actor, &plan.key, Some(plan), vec![("import".into(), json!({ "tasks": plan.tasks.len(), "scenarios": plan.scenarios.len() }).to_string())]))
     }
 

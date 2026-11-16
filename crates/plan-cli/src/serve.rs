@@ -99,7 +99,7 @@ pub fn run(port: u16, open: bool) {
                     let ch: Vec<Change> = serde_json::from_value(b["changes"].clone()).map_err(|e| vec![Issue::error(e.to_string())])?;
                     let est = EstKind::parse(b["est"].as_str().unwrap_or("e")).unwrap_or(EstKind::E);
                     let ops = pm.changes_to_ops(&k, b["scenario"].as_str().unwrap_or(""), b["rate"].as_f64().unwrap_or(1.0), est, &ch)?;
-                    ed.apply(&k, "web", &ops).map(|_| serde_json::json!({ "ops": ops.len() }))
+                    ed.apply(&k, &actor, &ops).map(|_| serde_json::json!({ "ops": ops.len() }))
                 })();
                 result(req, r)
             }
@@ -109,7 +109,7 @@ pub fn run(port: u16, open: bool) {
             }
             (Method::Post, ["api", "import"]) => {
                 let r = serde_json::from_value::<plan_contracts::Plan>(b["plan"].clone()).map_err(|e| vec![Issue::error(format!("invalid plan: {e}"))])
-                    .and_then(|p| st.import(&p, &actor).map(|_| serde_json::json!({ "epic": p.key })));
+                    .and_then(|p| ed.import(&plan_access::JsonPlan(p), None, &actor).map(|k| serde_json::json!({ "epic": k })));
                 result(req, r)
             }
             (Method::Post, ["api", "epic", k, "delete"]) => result(req, ed.delete_epic(&decode(k), &actor).map(|_| serde_json::json!({}))),
