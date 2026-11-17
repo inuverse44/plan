@@ -133,6 +133,21 @@ impl PlanEditingManager {
         self.plan_access.apply(epic, actor, ops, &validate)
     }
 
+    /// The epic's version (the id of its last change) and who made it (cli, mcp, web…); (0, "") before any change
+    pub fn epic_version(&self, epic: &str) -> Result<(i64, String), Vec<Issue>> {
+        Ok(self.plan_access.history(Some(epic), 1)?.into_iter().next().map(|h| (h.id, h.actor)).unwrap_or((0, String::new())))
+    }
+
+    /// Apply only if the epic is still at `base`, the version the editor loaded; otherwise nothing is written and the issue starts with "conflict".
+    /// The check and the write are not one transaction: the HTTP server handles one request at a time, which is what makes this safe there
+    pub fn apply_at(&self, epic: &str, actor: &str, ops: &[EditOp], base: Option<i64>) -> Result<(), Vec<Issue>> {
+        if let Some(b) = base {
+            let (v, by) = self.epic_version(epic)?;
+            if v != b { return Err(vec![Issue::error(format!("conflict: {epic} was changed{} since you loaded it", if by.is_empty() { String::new() } else { format!(" by {by}") }))]); }
+        }
+        self.apply(epic, actor, ops)
+    }
+
     /// Import a plan from another store (TOML, ...)
     pub fn import(&self, from: &dyn PlanAccess, key: Option<&str>, actor: &str) -> Result<String, Vec<Issue>> {
         let mut p = from.read_plan("")?;

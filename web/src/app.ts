@@ -25,7 +25,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     owner: '',
   };
   // null while no epic is open (nothing reads them before that; render checks ev first)
-  let planner: wasm_bindgen.Planner = null!, ev: Evaluation = null!, plan: Plan = null!, version: number | null = null, curCache: { sig: string; run: RunResult } | null = null;
+  let planner: wasm_bindgen.Planner = null!, ev: Evaluation = null!, plan: Plan = null!, version: number | null = null, epicVersion: number | null = null, busy = false, curCache: { sig: string; run: RunResult } | null = null;
   try { const k = JSON.parse(localStorage.getItem(KEEP) || '{}'); st.view = k.view || 'gantt'; st.level = k.level || 'task'; st.prefs = k.prefs || {}; st.owner = k.owner || '' } catch { st.prefs = {} }
   await wasm_bindgen(boot.mode === 'live' ? { module_or_path: '/pkg/plan_web_bg.wasm' } : { module_or_path: Uint8Array.from(atob(boot.wasm), c => c.charCodeAt(0)) });
 
@@ -108,16 +108,25 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     if (st.epic !== k) { Object.assign(st, { epic: k, s: '', r: '', sel: openSel, selStory: null, changes: {}, hist: {}, fut: {} }) }
     openSel = null;
     if (boot.mode === 'live') {
-      const res = await api<{ plan: Plan; version: number }>('/api/epic/' + encodeURIComponent(k));
+      const res = await api<{ plan: Plan; version: number; epic_version: number }>('/api/epic/' + encodeURIComponent(k));
       if (!res.ok) {
         // Deleted epic or a mistyped link: back to the list (replacing the bad address, so Back does not return to it)
         if (res.issues.some(i => i.message === `no epic ${k}`)) { history.replaceState(null, '', '#/'); home(); P.toast(`Epic ${k} was not found`); return }
         $('errors').innerHTML = `<div class="err">${esc(issueText(res.issues))}</div>`; return
       }
-      plan = res.data.plan; version = res.data.version;
+      plan = res.data.plan; version = res.data.version; epicVersion = res.data.epic_version;
     } else plan = boot.plan;
     if (!keepChanges) { st.changes = {}; st.hist = {}; st.fut = {} }
-    if (evaluate()) render();
+    if (evaluate()) {
+      // Moves kept across a reload whose task (or scenario) is gone cannot be re-applied: drop them and say so
+      const lost: string[] = [];
+      for (const [rk, m] of Object.entries(st.changes)) {
+        const ids = new Set((ev.runs.find(r => r.key === rk)?.tasks || []).map(t => t.id));
+        for (const id of Object.keys(m)) if (!ids.has(id)) { delete m[id]; lost.push(id) }
+      }
+      render();
+      if (lost.length) P.toast(`Moves dropped (the task is gone): ${[...new Set(lost)].join(', ')}`);
+    }
     if (boot.mode === 'live') loadOthers(k);
   }
 
@@ -130,12 +139,19 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   }
 
   // Send edits to the server (stored there), then reload
+  const conflict = (is: Issue[]) => is.some(i => i.message.startsWith('conflict:'));
   async function edit(ops: EditOp[]): Promise<boolean> {
     if (!LIVE || !st.epic) return false;
-    const res = await api('/api/epic/' + encodeURIComponent(st.epic) + '/ops', { ops });
-    if (!res.ok) { P.toast(issueText(res.issues)); render(); return false }
-    await openEpic(st.epic, true);
-    return true;
+    busy = true;
+    try {
+      const res = await api('/api/epic/' + encodeURIComponent(st.epic) + '/ops', { ops, base: epicVersion });
+      if (!res.ok) {
+        if (conflict(res.issues)) { await openEpic(st.epic, true); P.toast(issueText(res.issues).replace('conflict: ', '') + '. Reloaded; try again') } else { P.toast(issueText(res.issues)); render() }
+        return false;
+      }
+      await openEpic(st.epic, true);
+      return true;
+    } finally { busy = false }
   }
   // Edit target: all scenarios (the base tasks) or only this scenario (its overrides)
   const scen = () => (hasScenarios() && st.target === 'one' ? st.s : undefined);
@@ -169,9 +185,17 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   function reset() { const k = key(); if (!changeList().length) return; (st.hist[k] ||= []).push(snap()); st.changes[k] = {}; st.fut[k] = []; render() }
   async function saveChanges() {
     if (!LIVE || !st.epic || !changeList().length) return;
-    const res = await api('/api/epic/' + encodeURIComponent(st.epic) + '/save', { scenario: st.s, rate: Number(st.r), est: st.e, changes: changeList() });
-    if (!res.ok) { P.toast(issueText(res.issues)); return }
-    P.toast('Saved'); await openEpic(st.epic, false);
+    busy = true;
+    try {
+      const res = await api('/api/epic/' + encodeURIComponent(st.epic) + '/save', { scenario: st.s, rate: Number(st.r), est: st.e, changes: changeList(), base: epicVersion });
+      if (!res.ok) {
+        // Someone else changed the epic: reload it with these moves kept on top, so they can be checked and saved again
+        if (conflict(res.issues)) { await openEpic(st.epic, true); P.toast(issueText(res.issues).replace('conflict: ', '') + '. Your moves are kept on the new plan; check them and Save again') }
+        else P.toast(issueText(res.issues));
+        return;
+      }
+      P.toast('Saved'); await openEpic(st.epic, false);
+    } finally { busy = false }
   }
 
   // ---------- Top controls ----------
@@ -457,8 +481,16 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   addEventListener('hashchange', route);
   if (LIVE) setInterval(async () => {
     try {
+      if (busy) return;
       const v: number = (await (await fetch('/api/version')).json()).version;
-      if (version != null && v !== version) { version = v; if (st.epic) { await openEpic(st.epic, true); P.toast('Reloaded changes from CLI') } else home() }
+      if (version != null && v !== version) {
+        version = v;
+        if (!st.epic) return home();
+        // Something changed somewhere: reload only if it was this epic, and say who changed it
+        const k = st.epic, ev2 = await api<{ version: number; actor: string }>('/api/epic/' + encodeURIComponent(k) + '/version');
+        if (!ev2.ok || busy || st.epic !== k || ev2.data.version === epicVersion) return;
+        await openEpic(k, true); P.toast(`Updated by ${ev2.data.actor || 'someone'}`);
+      }
       version = v;
     } catch { }
   }, 2000);

@@ -7,7 +7,9 @@
 //!   GET  /api/epic/KEY                    one epic's plan (JSON)
 //!   GET  /api/agenda?owner=NAME&today=YYYY-MM-DD   next task, starting today, due this week, risks
 //!   POST /api/epic/KEY/ops   {ops:[EditOp]}
-//!   POST /api/epic/KEY/save  {scenario,rate,est,changes}   write moves tried in the UI into the plan
+//!   POST /api/epic/KEY/save  {scenario,rate,est,changes,base}   write moves tried in the UI into the plan
+//!   GET  /api/epic/KEY/version               {version, actor}: the epic's last change and who made it
+//!   ops and save take an optional base (the epic_version the client loaded); if the epic changed since, they fail with "conflict: …"
 //!   POST /api/epic/KEY/delete
 //!   GET  /api/epic/KEY/history
 //!   GET  /api/history?epic=KEY&limit=N
@@ -93,11 +95,12 @@ pub fn run(port: u16, open: bool) {
                 })();
                 result(req, r)
             }
-            (Method::Get, ["api", "epic", k]) => result(req, ed.plan(&decode(k)).map(|p| serde_json::json!({ "version": ed.version(), "plan": p }))),
+            (Method::Get, ["api", "epic", k]) => { let k = decode(k); result(req, ed.plan(&k).and_then(|p| Ok(serde_json::json!({ "version": ed.version(), "epic_version": ed.epic_version(&k)?.0, "plan": p })))) }
+            (Method::Get, ["api", "epic", k, "version"]) => result(req, ed.epic_version(&decode(k)).map(|(v, by)| serde_json::json!({ "version": v, "actor": by }))),
             (Method::Get, ["api", "epic", k, "history"]) => result(req, ed.history(Some(&decode(k)), 100).map(|h| serde_json::to_value(h).unwrap())),
             (Method::Post, ["api", "epic", k, "ops"]) => {
                 let r = crate::edits::parse(b["ops"].clone())
-                    .and_then(|ops| ed.apply(&decode(k), &actor, &ops)).map(|_| serde_json::json!({}));
+                    .and_then(|ops| ed.apply_at(&decode(k), &actor, &ops, b["base"].as_i64())).map(|_| serde_json::json!({}));
                 result(req, r)
             }
             (Method::Post, ["api", "epic", k, "save"]) => {
@@ -106,7 +109,7 @@ pub fn run(port: u16, open: bool) {
                     let ch: Vec<Change> = serde_json::from_value(b["changes"].clone()).map_err(|e| vec![Issue::error(e.to_string())])?;
                     let est = EstKind::parse(b["est"].as_str().unwrap_or("e")).unwrap_or(EstKind::E);
                     let ops = pm.changes_to_ops(&k, b["scenario"].as_str().unwrap_or(""), b["rate"].as_f64().unwrap_or(1.0), est, &ch)?;
-                    ed.apply(&k, &actor, &ops).map(|_| serde_json::json!({ "ops": ops.len() }))
+                    ed.apply_at(&k, &actor, &ops, b["base"].as_i64()).map(|_| serde_json::json!({ "ops": ops.len() }))
                 })();
                 result(req, r)
             }
