@@ -100,6 +100,7 @@ pub fn inspect(plan: &Plan, scenarios: &[Scenario]) -> Vec<Issue> {
             let ts = Some(t.id.as_str());
             for p in &t.after { if !ids.contains(&p.as_str()) { errs.push(Issue::error(format!("unknown task in after: {p}")).at(sk, ts)); } }
             if t.wait.is_some() && estimation::present(&t.effort) { errs.push(Issue::error("use effort or wait, not both").at(sk, ts)); }
+            if let (Some(a), Some(b)) = (t.actual_start, t.actual_finish) { if b < a { errs.push(Issue::error(format!("actual_finish {b} is before actual_start {a}")).at(sk, ts)); } }
             if estimation::present(&t.effort) && t.wait.is_none() {
                 if t.deliverable.is_empty() { out.push(Issue::warning("no deliverable").at(sk, ts)); }
                 let owners: Vec<String> = t.owners.clone().unwrap_or_else(|| plan.default_owner.clone().into_iter().collect());

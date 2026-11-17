@@ -235,6 +235,8 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
           <label>Not before<input type="date" data-f="not_before" value="${sp.not_before || ''}" ${ro ? 'disabled' : ''}></label></div>
         <div class="checks"><label><input type="checkbox" data-f="waitkind" ${sp.wait != null ? 'checked' : ''} ${ro ? 'disabled' : ''}>Wait</label>
           <label><input type="checkbox" data-f="done" ${sp.done ? 'checked' : ''} ${ro ? 'disabled' : ''}>Done</label></div>
+        <div class="row2"><label>Actual start<input type="date" data-f="actual_start" value="${sp.actual_start || ''}" ${ro ? 'disabled' : ''}></label>
+          <label>Actual finish<input type="date" data-f="actual_finish" value="${sp.actual_finish || ''}" ${ro ? 'disabled' : ''}></label></div>
       </div>
       <dl><dt>Start</dt><dd>${mdw(S.start(t.es))} ${S.half(t.es)}</dd><dt>Finish</dt><dd>${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : '—'}</dd>
       <dt>Float</dt><dd style="color:var(${P.COLOR[t.color]})">${t.tf == null ? '—' : t.tf / 2 + 'd'}${t.ff != null ? ` (free ${t.ff / 2}d)` : ''}</dd><dt>Driven by</dt><dd>${esc(t.why)}</dd>
@@ -254,11 +256,13 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     el.querySelectorAll<HTMLInputElement>('[data-f]').forEach(inpEl => inpEl.onchange = () => {
       const f = inpEl.dataset.f!, v = inpEl.type === 'checkbox' ? inpEl.checked : inpEl.value.trim();
       if (f === 'waitkind') { const cur = estParse(estText(sp.wait ?? sp.effort)) ?? 1; return setTask(t.id, v ? { wait: cur, clear: ['effort'] } : { effort: cur, clear: ['wait'] }) }
+      // Done without a finish date: finished today (the viewer's local day)
+      if (f === 'done' && v === true && !sp.actual_finish) return setTask(t.id, { done: true, actual_finish: P.iso(new Date()) });
       if (typeof v === 'boolean') return setTask(t.id, { [f]: v });
       if (f === 'effort' || f === 'wait') { const x = estParse(v); if (x == null) { P.toast('Enter 1 number or 3 (optimistic, likely, pessimistic)'); return render() } return setTask(t.id, { [f]: x }) }
       if (f === 'needs') return setTask(t.id, { needs: v ? String(v).split(/[,、\s]+/).filter(Boolean) : [] });
       if (f === 'owners') return setTask(t.id, v ? { owners: v.split(/[,、\s]+/).filter(Boolean) } : { clear: ['owners'] });
-      if (f === 'not_before') return setTask(t.id, v ? { not_before: v } : { clear: ['not_before'] });
+      if (f === 'not_before' || f === 'actual_start' || f === 'actual_finish') return setTask(t.id, v ? { [f]: v } : { clear: [f] });
       setTask(t.id, { [f]: v });
     });
   }

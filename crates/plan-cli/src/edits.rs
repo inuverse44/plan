@@ -2,6 +2,7 @@
 //!
 //! `EditOp` and `EpicSettings` reject unknown fields themselves. Tasks, patches and stories are also stored
 //! in plans, where an older build must still read newer data, so they stay lenient there and are checked here instead.
+use chrono::NaiveDate;
 use plan_contracts::{EditOp, Issue, Story, TaskPatch, TaskSpec};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use serde_json::Value;
@@ -26,6 +27,17 @@ pub fn parse(v: Value) -> Result<Vec<EditOp>, Vec<Issue>> {
     }
     if !issues.is_empty() { return Err(issues); }
     serde_json::from_value(v).map_err(|e| vec![Issue::error(format!("invalid edits: {e}"))])
+}
+
+/// Marking a task done without a finish date records `today` as its actual finish (the person's local day, so the CLI and MCP fill it, not the server)
+pub fn finish_today(ops: &mut [EditOp], today: NaiveDate) {
+    for op in ops {
+        match op {
+            EditOp::SetTask { patch, .. } if patch.done == Some(true) && patch.actual_finish.is_none() && !patch.clear.iter().any(|c| c == "actual_finish") => patch.actual_finish = Some(today),
+            EditOp::AddTask { task } if task.done && task.actual_finish.is_none() => task.actual_finish = Some(today),
+            _ => {}
+        }
+    }
 }
 
 fn unknown(obj: &Value, known: &[&str]) -> Vec<String> {
@@ -79,6 +91,20 @@ mod tests {
             let e = parse(v).unwrap_err();
             assert!(e[0].message.contains(word), "{}", e[0].message);
         }
+    }
+
+    #[test]
+    fn done_without_a_date_finishes_today() {
+        let d = NaiveDate::from_ymd_opt(2026, 11, 17).unwrap();
+        let mut ops = parse(json!([
+            { "op": "set_task", "key": "A", "patch": { "done": true } },
+            { "op": "set_task", "key": "B", "patch": { "done": true, "actual_finish": "2026-11-01" } },
+            { "op": "set_task", "key": "C", "patch": { "done": false } },
+            { "op": "add_task", "task": { "id": "D", "name": "d", "done": true } }
+        ])).unwrap();
+        finish_today(&mut ops, d);
+        let fin = |i: usize| match &ops[i] { EditOp::SetTask { patch, .. } => patch.actual_finish, EditOp::AddTask { task } => task.actual_finish, _ => None };
+        assert_eq!([fin(0), fin(1), fin(2), fin(3)], [Some(d), NaiveDate::from_ymd_opt(2026, 11, 1), None, Some(d)]);
     }
 
     #[test]

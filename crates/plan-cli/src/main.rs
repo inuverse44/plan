@@ -109,7 +109,9 @@ pub fn apply_data(epic: &str, actor: &str, ops: &[EditOp]) -> Result<serde_json:
     let pm = PlanningManager::new(store(), Arc::new(JpRuleCalendar));
     let before = pm.evaluate(epic).ok();
     let ed = PlanEditingManager::new(store());
-    ed.apply(epic, actor, ops)?;
+    let mut ops = ops.to_vec();
+    edits::finish_today(&mut ops, chrono::Local::now().date_naive());
+    ed.apply(epic, actor, &ops)?;
     let after = pm.evaluate(epic);
     Ok(serde_json::json!({ "epic": epic, "applied": ops.len(), "version": ed.version(), "impact": impact(before.as_ref(), after) }))
 }
