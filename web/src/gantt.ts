@@ -32,17 +32,31 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   // (over): the line itself, which takes no pointer so bars stay draggable, and a marker in the header that carries the tooltip
   let over = '', todayHit = (_y: number, _h: number) => '';
   if (today >= cal.days[0] && today <= last) {
-    const x = xd(today), m = x + dw / 2, tip = `<title>Today ${mdw(today)}</title>`;
-    head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top + 4}" fill="${css('--accent')}" opacity=".08">${tip}</rect>`
-      + `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="transparent" stroke-width="8">${tip}</line>`;
-    todayHit = (y: number, h: number) => `<line x1="${m}" y1="${y}" x2="${m}" y2="${y + h}" stroke="transparent" stroke-width="8">${tip}</line>`;
+    // The date shows in the page's own tooltip (data-tip, see wireTips): native SVG <title> tooltips did not show in the browser
+    const x = xd(today), m = x + dw / 2, tip = `data-tip="Today ${mdw(today)}"`;
+    head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top + 4}" fill="${css('--accent')}" opacity=".08" ${tip}/>`
+      + `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="transparent" stroke-width="8" ${tip}/>`;
+    todayHit = (y: number, h: number) => `<line x1="${m}" y1="${y}" x2="${m}" y2="${y + h}" stroke="transparent" stroke-width="8" ${tip}/>`;
     over = `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5" pointer-events="none"/>`
-      + `<g class="today-mark" style="cursor:default"><path d="M${m - 5} ${top - 10}h10l-5 6z" fill="${css('--accent')}"/><rect x="${m - 8}" y="${top - 14}" width="16" height="12" fill="transparent"/>${tip}</g>`;
+      + `<g class="today-mark" style="cursor:default" ${tip}><path d="M${m - 5} ${top - 10}h10l-5 6z" fill="${css('--accent')}"/><rect x="${m - 8}" y="${top - 14}" width="16" height="12" fill="transparent"/></g>`;
   }
-  if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"><title>Deadline ${mdw(S.ev.deadline)}</title></line>` }
+  if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"/><line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="transparent" stroke-width="8" data-tip="Deadline ${mdw(S.ev.deadline)}"/>` }
   // Bar extent: actual dates for done tasks that have them, otherwise the computed half-days
   const bx = (t: TaskView): [number, number] => t.kind === 'done' && t.actual_start ? [xd(t.actual_start), xd(t.actual_finish || t.actual_start) + dw] : [xs(t.es), xe(t.ef > t.es ? t.ef : t.es + 1)];
   return { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head, over, todayHit };
+}
+
+// The page's own tooltip for elements with data-tip (today, deadline): follows the pointer, takes no pointer itself
+function wireTips(el: HTMLElement) {
+  let box = document.getElementById('gtip');
+  if (!box) { box = document.createElement('div'); box.id = 'gtip'; box.setAttribute('role', 'tooltip'); document.body.appendChild(box) }
+  const b = box; b.hidden = true;
+  const place = (e: MouseEvent) => { b.style.left = `${e.clientX + 12}px`; b.style.top = `${e.clientY + 14}px` };
+  el.querySelectorAll<SVGElement>('[data-tip]').forEach(n => {
+    n.addEventListener('mouseenter', e => { b.textContent = n.dataset.tip!; b.hidden = false; place(e) });
+    n.addEventListener('mousemove', place);
+    n.addEventListener('mouseleave', () => b.hidden = true);
+  });
 }
 
 // Owner column: names joined, shortened to fit; the full list in the tooltip
@@ -111,7 +125,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     bars += `</g>`;
   });
   el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND();
-  wireLevel(el, ctx);
+  wireLevel(el, ctx); wireTips(el);
   el.querySelectorAll<SVGGElement>('.story-row').forEach(g => g.addEventListener('click', () => g.dataset.story ? ctx.selectStory(g.dataset.story) : null));
 };
 
@@ -192,7 +206,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     bars += `</g>`;
   }
   el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND();
-  wireLevel(el, ctx);
+  wireLevel(el, ctx); wireTips(el);
 
   const svg = el.querySelector<SVGSVGElement>('#gsvg')!;
   svg.querySelectorAll<SVGGElement>('g[data-id]').forEach(g => {
