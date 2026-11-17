@@ -6,8 +6,10 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   const t0 = D(acts.length && acts[0] < cal.days[cal.start_slot >> 1] ? acts[0] : cal.days[cal.start_slot >> 1]);
   let last = S.end(Math.max(run.end, base.end)); if (S.ev.deadline && S.ev.deadline > last) last = S.ev.deadline;
   const nd = Math.round((D(last).getTime() - t0.getTime()) / 864e5) + 6;
-  const lw = 300, ow = 228, rh = 32, top = 30; // ow: x of the owner column inside the label area
-  const avail = Math.max(640, el.clientWidth - 26);
+  // ow: x of the owner column inside the label area. On narrow screens (phones) the label area shrinks and the owner column goes (owners move into the task tooltip; the side panel shows them too)
+  const narrow = el.clientWidth < 600;
+  const lw = narrow ? 170 : 300, ow = narrow ? -1 : 228, rh = 32, top = 30;
+  const avail = Math.max(narrow ? 360 : 640, el.clientWidth - 26);
   const dw = Math.max(14, Math.min(36, (avail - lw) / nd));
   const W = lw + nd * dw + 30, H = top + nrows * rh + 8;
   const xd = (s: string) => lw + Math.round((D(s).getTime() - t0.getTime()) / 864e5) * dw;
@@ -19,7 +21,7 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
   <marker id="ga" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--muted')}"/></marker>
   <marker id="gh" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L8 4L0 8z" fill="${css('--accent')}"/></marker></defs>`;
   for (const [n, r] of Object.entries(S.ev.resources)) for (const [a, b] of r.off) { const x1 = Math.max(lw, xd(a)), x2 = Math.min(W, xd(b) + dw); if (x2 > x1) head += `<rect x="${x1}" y="${top - 4}" width="${x2 - x1}" height="${H - top}" fill="${css('--freeze')}"><title>${P.esc(r.label || n)}: ${P.esc(n)} unavailable</title></rect>` }
-  head += `<text x="${ow}" y="${top - 12}" font-size="11" style="fill:${css('--muted')}">Owner</text>`;
+  if (ow >= 0) head += `<text x="${ow}" y="${top - 12}" font-size="11" style="fill:${css('--muted')}">Owner</text>`;
   for (let i = 0; i < nd; i++) {
     const d = new Date(t0.getTime() + i * 864e5), w = d.getDay(), x = lw + i * dw;
     if (w === 0 || w === 6 || off.has(iso(d))) head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top}" fill="${css('--faint')}"/>`;
@@ -41,7 +43,7 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
 
 // Owner column: names joined, shortened to fit; the full list in the tooltip
 function ownerCell(owners: string[], x: number, y: number) {
-  if (!owners.length) return '';
+  if (!owners.length || x < 0) return '';
   const o = owners.join(', ');
   return `<text x="${x}" y="${y + 21}" font-size="12" style="fill:${P.css('--muted')}">${P.esc(o.length > 6 ? o.slice(0, 5) + '…' : o)}<title>${P.esc(o)}</title></text>`;
 }
@@ -164,7 +166,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   for (const k of taskRows) {
     const t = K[k], b = B[k], y = ry(k), dim = rel && !rel.has(k);
     const crit = t.tf === 0 && t.kind !== 'done';
-    const tip = `${t.name}\n${mdw(S.start(t.es))} ${S.half(t.es)} – ${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : ''}\nFloat ${t.tf == null ? '—' : t.tf / 2}d · ${t.why}`;
+    const tip = `${t.name}\n${mdw(S.start(t.es))} ${S.half(t.es)} – ${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : ''}\nFloat ${t.tf == null ? '—' : t.tf / 2}d · ${t.why}${ow < 0 && t.owners.length ? '\nOwner: ' + t.owners.join(', ') : ''}`;
     bars += `<g data-id="${k}" opacity="${dim ? .25 : 1}">`;
     const ind = t.story && sIdx[t.story] != null ? 14 : 0;
     bars += P.ICON('task', 6 + ind, y + 9, 14) + `<text x="${26 + ind}" y="${y + 21}" font-size="13" font-weight="${crit ? 600 : 400}" style="cursor:pointer">${esc((t.short || t.name).slice(0, 14))}<title>${esc(tip)}</title></text>`;

@@ -115,7 +115,7 @@ tbody tr{cursor:pointer}
 .home{max-width:960px;margin:0 auto;padding:24px 16px;display:grid;gap:16px}
 .home h1{font-size:20px}
 .home-form{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px}
-.home-form input{min-width:120px}
+.home-form input{min-width:120px} #new-name{flex:1}
 .empty{color:var(--muted)}
 .home-filter{display:inline-flex;margin:6px 0 4px}
 #home-next{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:grid;gap:6px}
@@ -144,6 +144,16 @@ tbody tr{cursor:pointer}
 .form input,.form select{width:100%;min-width:0}
 .row2>*{min-width:0}
 @media (max-width:900px){.main{grid-template-columns:1fr}.side{width:auto;position:static}}
+#home-list{overflow-x:auto}
+/* Phones: controls wrap inside the page; wide content (the Gantt, tables) scrolls inside its own box */
+@media (max-width:600px){
+  .top{gap:6px;padding:8px 12px} h1{font-size:15px;margin:0;min-width:0;flex:1 1 60%}
+  .bar2{gap:8px;padding:10px 12px 0} .field select{max-width:180px}
+  .strip{gap:8px;padding:10px 12px} .card{min-width:0;flex:1 1 40%;padding:6px 10px} .card .v{font-size:16px}
+  .tabs{margin-left:0;flex-wrap:wrap;width:100%} .seg{max-width:100%;overflow-x:auto}
+  .main{padding:0 12px 12px} .view{padding:8px}
+  .home{padding:16px 12px} .home-form input{min-width:0;flex:1 1 120px} #new-name{flex-basis:100%}
+}
 </style>
 </head>
 <body>
@@ -157,7 +167,7 @@ tbody tr{cursor:pointer}
   <div style="display:flex;align-items:center;gap:10px"><a class="logo" href="#/" title="Epics" aria-label="Plan: epics"><svg><use href="#i-logo"/></svg></a><h1 style="margin-right:auto"><svg class="ico"><use href="#i-epic"/></svg> Epics</h1><button class="icon-btn icon-only theme" title="Light / dark" aria-label="Toggle light or dark"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button><a class="icon-btn icon-only" href="#/help" title="Help" aria-label="Help" style="text-decoration:none">?</a></div>
   <form class="home-form" id="new-epic" aria-label="New epic">
     <input id="new-key" placeholder="key" required pattern="[^\s/]+" aria-label="Key" size="12">
-    <input id="new-name" placeholder="Name" required aria-label="Name" style="flex:1">
+    <input id="new-name" placeholder="Name" required aria-label="Name">
     <input id="new-start" type="date" required aria-label="Start">
     <button class="icon-btn primary" type="submit">New epic</button>
   </form>
