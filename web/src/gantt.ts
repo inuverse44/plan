@@ -28,17 +28,21 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
     if (w === 1) head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--line')}"/><text x="${x + 3}" y="${top - 12}" font-size="11" style="fill:${css('--muted')}">${P.md(iso(d))}</text>`;
   }
   const today = iso(new Date());
-  // Today: its column shaded, a line through its middle, and a wider invisible line that carries the tooltip
+  // Today: its column shaded and a wider invisible line with the tooltip (under the rows), and on top of everything
+  // (over): the line itself, which takes no pointer so bars stay draggable, and a marker in the header that carries the tooltip
+  let over = '', todayHit = (_y: number, _h: number) => '';
   if (today >= cal.days[0] && today <= last) {
     const x = xd(today), m = x + dw / 2, tip = `<title>Today ${mdw(today)}</title>`;
     head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top + 4}" fill="${css('--accent')}" opacity=".08">${tip}</rect>`
-      + `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5"/>`
       + `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="transparent" stroke-width="8">${tip}</line>`;
+    todayHit = (y: number, h: number) => `<line x1="${m}" y1="${y}" x2="${m}" y2="${y + h}" stroke="transparent" stroke-width="8">${tip}</line>`;
+    over = `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5" pointer-events="none"/>`
+      + `<g class="today-mark" style="cursor:default"><path d="M${m - 5} ${top - 10}h10l-5 6z" fill="${css('--accent')}"/><rect x="${m - 8}" y="${top - 14}" width="16" height="12" fill="transparent"/>${tip}</g>`;
   }
   if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"><title>Deadline ${mdw(S.ev.deadline)}</title></line>` }
   // Bar extent: actual dates for done tasks that have them, otherwise the computed half-days
   const bx = (t: TaskView): [number, number] => t.kind === 'done' && t.actual_start ? [xd(t.actual_start), xd(t.actual_finish || t.actual_start) + dw] : [xs(t.es), xe(t.ef > t.es ? t.ef : t.es + 1)];
-  return { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head };
+  return { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head, over, todayHit };
 }
 
 // Owner column: names joined, shortened to fit; the full list in the tooltip
@@ -73,7 +77,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     const fl = mem.filter(t => t.tf != null && t.kind !== 'wait').map(t => t.tf as number);
     return { x1: Math.min(...xs2.map(v => v[0])), x2: Math.max(...xs2.map(v => v[1])), n: all.length, done: all.length - mem.length, color: (worst || 'done') as FloatColor, minf: fl.length ? Math.min(...fl) / 2 : null };
   };
-  const { lw, ow, rh, top, W, xs, xe, bx, head } = ganttFrame(el, ctx, groups.length);
+  const { lw, ow, rh, top, W, xs, xe, bx, head, over } = ganttFrame(el, ctx, groups.length);
   let s = head;
   const ry = (i: number) => top + i * rh;
   // Story dependencies: one line per pair of stories that have any task dependency between them
@@ -92,7 +96,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
   let bars = '';
   groups.forEach((g, i) => {
     const y = ry(i), sp = span(run, g), b0 = span(base, g), sel = ctx.selStory === g.key && g.key;
-    if (sel) bars += `<rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
+    if (sel) bars += `<rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08" pointer-events="none"/>`;
     bars += `<g class="story-row" data-story="${esc(g.key)}">` + (g.key ? P.ICON('story', 6, y + 8) : '') +
       `<text x="${g.key ? 28 : 8}" y="${y + 21}" font-size="13" font-weight="600" style="${g.key ? '' : `fill:${css('--muted')}`}">${esc(g.name.slice(0, 15))}<title>${esc(g.name)}</title></text>`;
     bars += ownerCell([...new Set(run.tasks.filter(t => groupOf(t) === g.key && mine(t)).flatMap(t => t.owners))], ow, y);
@@ -106,7 +110,7 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     }
     bars += `</g>`;
   });
-  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}</svg></div>` + P.LEGEND();
+  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND();
   wireLevel(el, ctx);
   el.querySelectorAll<SVGGElement>('.story-row').forEach(g => g.addEventListener('click', () => g.dataset.story ? ctx.selectStory(g.dataset.story) : null));
 };
@@ -133,13 +137,13 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   }
   if (!ctx.owner) for (const x of stories) if (!ids.some(id => B[id].story === x.key)) rows.push({ story: x.key });
   const K = P.index(run);
-  const { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head } = ganttFrame(el, ctx, rows.length);
+  const { t0, nd, lw, ow, rh, top, dw, W, H, xd, xs, xe, bx, last, head, over, todayHit } = ganttFrame(el, ctx, rows.length);
   let s = head;
   const ry = (id: string) => top + rows.indexOf(id) * rh;
   const taskRows = rows.filter((r): r is string => typeof r === 'string');
   const rel = ctx.focus ? P.related(run, ctx.focus) : null;
   // Highlight of the selected row
-  if (ctx.sel && rows.includes(ctx.sel)) s += `<rect x="0" y="${ry(ctx.sel)}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08"/>`;
+  if (ctx.sel && rows.includes(ctx.sel)) s += `<rect x="0" y="${ry(ctx.sel)}" width="${W}" height="${rh}" fill="${css('--accent')}" opacity=".08" pointer-events="none"/>`;
 
   let deps = '';
   for (const k of taskRows) for (const p of K[k].reduced_after) {
@@ -155,7 +159,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     const y = top + i * rh, sk = r.story, sname = stories.find(x => x.key === sk)?.name || sk;
     const mem = run.tasks.filter(t => (sk ? t.story === sk : !(t.story in sIdx)) && (t.kind !== 'done' || t.actual_start));
     const sel = ctx.selStory && ctx.selStory === sk;
-    bars += `<g class="story-row" data-story="${esc(sk)}"><rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--surface-2')}" opacity="${sel ? .9 : .45}"/>`;
+    bars += `<g class="story-row" data-story="${esc(sk)}"><rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--surface-2')}" opacity="${sel ? .9 : .45}"/>` + todayHit(y, rh);
     bars += P.ICON('story', 6, y + 8) + `<text x="28" y="${y + 21}" font-size="13" font-weight="600">${esc(sname.slice(0, 15))}<title>${esc(sname)}</title></text>`;
     if (mem.length) {
       const x1 = Math.min(...mem.map(t => bx(t)[0])), x2 = Math.max(...mem.map(t => bx(t)[1]));
@@ -187,7 +191,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     }
     bars += `</g>`;
   }
-  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}</svg></div>` + P.LEGEND();
+  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND();
   wireLevel(el, ctx);
 
   const svg = el.querySelector<SVGSVGElement>('#gsvg')!;
