@@ -26,7 +26,13 @@ function ganttFrame(el: HTMLElement, ctx: ViewCtx, nrows: number) {
     if (w === 1) head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--line')}"/><text x="${x + 3}" y="${top - 12}" font-size="11" style="fill:${css('--muted')}">${P.md(iso(d))}</text>`;
   }
   const today = iso(new Date());
-  if (today >= cal.days[0] && today <= last) { const x = xd(today); head += `<line x1="${x}" y1="${top - 4}" x2="${x}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5"/>` }
+  // Today: its column shaded, a line through its middle, and a wider invisible line that carries the tooltip
+  if (today >= cal.days[0] && today <= last) {
+    const x = xd(today), m = x + dw / 2, tip = `<title>Today ${mdw(today)}</title>`;
+    head += `<rect x="${x}" y="${top - 4}" width="${dw}" height="${H - top + 4}" fill="${css('--accent')}" opacity=".08">${tip}</rect>`
+      + `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="${css('--accent')}" stroke-width="1.5"/>`
+      + `<line x1="${m}" y1="${top - 4}" x2="${m}" y2="${H}" stroke="transparent" stroke-width="8">${tip}</line>`;
+  }
   if (S.ev.deadline) { const x = xd(S.ev.deadline) + dw; head += `<line x1="${x}" y1="${top - 8}" x2="${x}" y2="${H}" stroke="${css('--red')}" stroke-width="2" stroke-dasharray="5 3"><title>Deadline ${mdw(S.ev.deadline)}</title></line>` }
   // Bar extent: actual dates for done tasks that have them, otherwise the computed half-days
   const bx = (t: TaskView): [number, number] => t.kind === 'done' && t.actual_start ? [xd(t.actual_start), xd(t.actual_finish || t.actual_start) + dw] : [xs(t.es), xe(t.ef > t.es ? t.ef : t.es + 1)];
