@@ -35,6 +35,14 @@ fn run_props() -> Value {
         "est": { "type": "string", "description": "estimate kind: o, m, e or p (default: e when present)" }
     })
 }
+fn progress_props() -> Value {
+    json!({
+        "task": { "type": "string", "description": "task id, ticket, or part of its name" },
+        "epic": { "type": "string", "description": "only this epic (default: all)" },
+        "date": { "type": "string", "description": "YYYY-MM-DD (default: today)" },
+        "person": { "type": "string", "description": "whose next task to report (default: the task's owner)" }
+    })
+}
 fn schema(props: Value, required: &[&str]) -> Value { json!({ "type": "object", "properties": props, "required": required }) }
 fn with(mut a: Value, b: Value) -> Value { a.as_object_mut().unwrap().extend(b.as_object().unwrap().clone()); a }
 
@@ -61,6 +69,10 @@ pub fn tools() -> Value {
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "owner name (default: everyone)" } }), &[]), "annotations": ro },
         { "name": "today", "description": "A daily briefing for a person across all epics: the next task, tasks planned to start by today but not started, tasks due by Sunday, and risks (late starts, epics planned past their deadline, epics that cannot be evaluated). Dates are the local today.",
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "owner name (default: everyone)" } }), &[]), "annotations": ro },
+        { "name": "start", "description": "Record that a task started (\"I started X\"): sets its actual start (default today). The task is found across epics by id or ticket, otherwise by part of its name; if several match, the candidates come back and nothing changes. Returns the effect on the schedule and the person's next task.",
+          "inputSchema": schema(progress_props(), &["task"]), "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true } },
+        { "name": "finish", "description": "Record that a task is done (\"I finished X\"): marks it done with its actual finish (default today). Found like start. Returns the effect on the schedule (new end, slack) and the person's next task.",
+          "inputSchema": schema(progress_props(), &["task"]), "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true } },
         { "name": "delete_epic", "description": "Delete a whole epic (its stories, tasks and scenarios). Its content stays in the change history (log). Ask the person before using it.",
           "inputSchema": schema(json!({ "epic": { "type": "string", "description": "the epic key" } }), &["epic"]),
           "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true } },
@@ -88,6 +100,11 @@ pub fn call(name: &str, args: &Value) -> Result<Value, Vec<Issue>> {
         "load" => crate::load_data(s("person")),
         "next" => crate::agenda_data(s("person")).map(|d| json!({ "next": d["next"], "then": d["then"] })),
         "today" => crate::agenda_data(s("person")),
+        "start" | "finish" => {
+            let date = s("date").map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| vec![Issue::error(format!("date must be YYYY-MM-DD: {d}"))])).transpose()?;
+            let step = if name == "start" { crate::progress::Step::Start } else { crate::progress::Step::Finish };
+            crate::progress::record(step, need("task")?, s("epic"), date, s("person"), "mcp")
+        }
         "log" => crate::log_data(s("epic"), args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize),
         "apply" => {
             let ops = crate::edits::parse(args.get("ops").cloned().unwrap_or(Value::Null))?;
