@@ -28,7 +28,9 @@ pub fn build(owner: Option<&str>, today: NaiveDate, items: Vec<AgendaTask>, epic
     let start_today = by_start(mine.iter().filter(|t| t.start <= today && !t.started).cloned().collect());
     let mut due_this_week: Vec<AgendaTask> = mine.iter().filter(|t| t.finish <= sunday).cloned().collect();
     due_this_week.sort_by(|a, b| a.finish.cmp(&b.finish).then(a.float_days.total_cmp(&b.float_days)));
-    let mut risks: Vec<AgendaRisk> = epics.iter().filter_map(|e| {
+    // With a person given, deadline risks only for the epics where they have open tasks
+    let theirs: std::collections::HashSet<&str> = mine.iter().map(|t| t.epic.as_str()).collect();
+    let mut risks: Vec<AgendaRisk> = epics.iter().filter(|e| owner.is_none() || theirs.contains(e.epic.as_str())).filter_map(|e| {
         let (s, t) = (e.slack_days?, e.target?);
         (s < 0).then(|| AgendaRisk { epic: e.epic.clone(), task: None, message: format!("{}: planned to reach the target on {t}, {} business day(s) after the deadline {}", e.name, -s, e.deadline.map(|d| d.to_string()).unwrap_or_default()) })
     }).collect();

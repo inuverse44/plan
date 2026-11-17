@@ -45,4 +45,8 @@ fn agenda_picks_one_next_task_and_flags_late_starts() {
     ed.apply("a", "test", &[EditOp::SetEpic { settings: EpicSettings { deadline: Some(Some(day("2026-11-20"))), ..Default::default() } }]).unwrap();
     let a = pm.agenda(None, day("2026-11-17")).unwrap();
     assert!(a.risks.iter().any(|r| r.task.is_none() && r.message.contains("after the deadline")), "{:?}", a.risks);
+    // ... shown to alice, who has tasks there, but not to someone who has none
+    let late = |who: &str| pm.agenda(Some(who), day("2026-11-17")).unwrap().risks.iter().any(|r| r.task.is_none() && r.message.contains("after the deadline"));
+    assert!(late("alice"));
+    assert!(!late("nobody"));
 }
