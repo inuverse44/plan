@@ -15,9 +15,11 @@ export function cli(...args: string[]): string {
   });
 }
 
-/** Fixes the browser's clock at TODAY (timers still run, so the 2-second polling works) and opens a page */
+/** Fixes the browser's clock at TODAY (timers still run, so the 2-second polling works), keeps the page off the network and opens it */
 export async function open(page: Page, hash: string) {
   await page.clock.setFixedTime(TODAY);
+  // Only the test server: the cases must not depend on the network (web fonts)
+  await page.route(url => url.hostname !== '127.0.0.1', r => r.abort());
   await page.goto('/' + hash);
 }
 
