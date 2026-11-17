@@ -20,6 +20,8 @@ $P show demo --json
 
 Requirements: Rust (with the `wasm32-unknown-unknown` target), `wasm-bindgen-cli` 0.2.100, Node.js (for `tsc`).
 
+The CLI embeds the UI (`web/index.html`, `web/ui/*.js`) and the WASM at compile time, so after changing anything under `web/` or `crates/plan-contracts`, run `./build.sh` again; `cargo build` alone keeps the old UI.
+
 ## Commands
 
 ```sh
