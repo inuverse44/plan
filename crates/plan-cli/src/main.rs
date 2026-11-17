@@ -30,6 +30,7 @@ fn say(human: impl std::fmt::Display, data: serde_json::Value) {
     if json() { println!("{}", serde_json::json!({ "ok": true, "data": data })) } else { println!("{human}") }
 }
 
+mod edits;
 mod mcp;
 mod serve;
 mod web;
@@ -409,7 +410,8 @@ fn main() {
         "apply" => {
             let src = a(2);
             let text = if src == "-" { let mut t = String::new(); std::io::Read::read_to_string(&mut std::io::stdin(), &mut t).unwrap(); t } else { std::fs::read_to_string(&src).unwrap_or_else(|e| die(&[Issue::error(format!("cannot read {src}: {e}"))])) };
-            let ops: Vec<EditOp> = serde_json::from_str(&text).unwrap_or_else(|e| die(&[Issue::error(format!("edits must be a JSON list: {e}. Example: [{{\"op\":\"set_task\",\"key\":\"T1\",\"patch\":{{\"effort\":2}}}}]"))]));
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| die(&[Issue::error(format!("edits must be JSON: {e}. Example: [{{\"op\":\"set_task\",\"key\":\"T1\",\"patch\":{{\"effort\":2}}}}]"))]));
+            let ops = edits::parse(v).unwrap_or_else(|e| die(&e));
             edit(&a(1), ops)
         }
         "load" => load(pos.get(1).map(String::as_str)),

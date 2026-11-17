@@ -17,7 +17,7 @@
 //! On Cloud Run (PORT is set) it listens on 0.0.0.0:PORT and never exits on idle (Cloud Run scales it down)
 use crate::web;
 use plan_access::{on_cloud_run, FirestorePlans, JpRuleCalendar, PlanAccess, TokenSource, Tokens};
-use plan_contracts::{Change, EditOp, EstKind, Issue};
+use plan_contracts::{Change, EstKind, Issue};
 use plan_manager::{PlanEditingManager, PlanningManager};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -89,7 +89,7 @@ pub fn run(port: u16, open: bool) {
             (Method::Get, ["api", "epic", k]) => result(req, ed.plan(&decode(k)).map(|p| serde_json::json!({ "version": ed.version(), "plan": p }))),
             (Method::Get, ["api", "epic", k, "history"]) => result(req, ed.history(Some(&decode(k)), 100).map(|h| serde_json::to_value(h).unwrap())),
             (Method::Post, ["api", "epic", k, "ops"]) => {
-                let r = serde_json::from_value::<Vec<EditOp>>(b["ops"].clone()).map_err(|e| vec![Issue::error(format!("invalid edits: {e}"))])
+                let r = crate::edits::parse(b["ops"].clone())
                     .and_then(|ops| ed.apply(&decode(k), &actor, &ops)).map(|_| serde_json::json!({}));
                 result(req, r)
             }

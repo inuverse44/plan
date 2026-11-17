@@ -5,13 +5,13 @@
 //! return the same data as `--json`. Edits are recorded with the actor `mcp`.
 //!
 //!   claude mcp add plan -- /path/to/plan mcp
-use plan_contracts::{EditOp, Issue};
+use plan_contracts::Issue;
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
 const PROTOCOL: &str = "2025-06-18";
 
-const APPLY_HELP: &str = r#"Apply a list of edits to one epic at once. If any edit is invalid (a dependency loop, an unknown task, removing the deadline task…) nothing is written.
+const APPLY_HELP: &str = r#"Apply a list of edits to one epic at once. If any edit is invalid (a dependency loop, an unknown task, removing the deadline task, a field this build does not know…) nothing is written.
 Edits:
   {"op":"set_story","story":{"key":"S1","name":"Investigate","purpose":"","dod":""}}
   {"op":"add_task","task":{"id":"T1","name":"…","story":"S1","deliverable":"…","effort":[1,2,4],"after":["T0"]}}
@@ -82,8 +82,7 @@ pub fn call(name: &str, args: &Value) -> Result<Value, Vec<Issue>> {
         "load" => crate::load_data(s("person")),
         "log" => crate::log_data(s("epic"), args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize),
         "apply" => {
-            let ops: Vec<EditOp> = serde_json::from_value(args.get("ops").cloned().unwrap_or(Value::Null))
-                .map_err(|x| vec![Issue::error(format!("ops must be a list of edits: {x}"))])?;
+            let ops = crate::edits::parse(args.get("ops").cloned().unwrap_or(Value::Null))?;
             crate::apply_data(need("epic")?, "mcp", &ops)
         }
         "delete_epic" => {
@@ -177,7 +176,7 @@ mod tests {
     #[test]
     fn apply_rejects_malformed_edits() {
         let (err, body) = tool("apply", json!({ "epic": "X", "ops": [{ "op": "no_such_op" }] }));
-        assert!(err && body["issues"][0]["message"].as_str().unwrap().contains("ops must be"), "{body}");
+        assert!(err && body["issues"][0]["message"].as_str().unwrap().contains("invalid edits"), "{body}");
         let (err, _) = tool("apply", json!({ "ops": [] }));
         assert!(err);
     }

@@ -565,10 +565,11 @@ pub fn fmt_num(x: f64) -> String {
 
 // ---------- Edits (PlanEditingManager → PlanAccess) ----------
 
-/// Epic settings (scheduling conditions)
+/// Epic settings (scheduling conditions). Only used in edits, so unknown fields are rejected
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields))]
+#[serde(deny_unknown_fields)]
 pub struct EpicSettings {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -582,11 +583,12 @@ pub struct EpicSettings {
     pub owners: Option<Vec<String>>,
 }
 
-/// One edit. With scenario = Some, it is written as that scenario's difference (the base tasks stay)
+/// One edit. With scenario = Some, it is written as that scenario's difference (the base tasks stay).
+/// Unknown fields are rejected, so a typo or a stale client does not look like a success
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(optional_fields))]
-#[serde(tag = "op", rename_all = "snake_case")]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EditOp {
     SetEpic { settings: EpicSettings },
     SetStory { story: Story },

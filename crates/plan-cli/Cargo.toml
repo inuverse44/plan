@@ -11,6 +11,7 @@ path = "src/main.rs"
 plan-contracts.workspace = true
 plan-manager.workspace = true
 plan-access.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["serde", "std", "clock"] }
 tiny_http = "0.12"
