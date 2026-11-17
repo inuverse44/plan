@@ -61,6 +61,7 @@ pub fn mutate(plan: &mut Plan, op: &EditOp) -> Result<(), Issue> {
             if let Some(v) = &s.deadline_label { plan.deadline_label = v.clone(); }
             if let Some(v) = &s.rates { if v.is_empty() { return Err(Issue::error("rates is empty")); } plan.rates = v.clone(); }
             if let Some(v) = &s.default_owner { plan.default_owner = v.clone(); }
+            if let Some(v) = s.max_task_days { if v.is_some_and(|x| !(x >= 0.0) || !x.is_finite()) { return Err(Issue::error("max_task_days must be a number ≥ 0")); } plan.max_task_days = v; }
             if let Some(v) = &s.owners { plan.owners = v.iter().map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(); }
         }
         EditOp::SetStory { story } => {
@@ -248,6 +249,7 @@ pub fn to_toml(p: &Plan) -> String {
     if p.round != 0.5 { o.push_str(&format!("round = {}\n", fmt_num(p.round))); }
     if let Some(v) = &p.default_owner { o.push_str(&format!("default_owner = {}\n", q(v))); }
     if !p.owners.is_empty() { o.push_str(&format!("owners = [{}]\n", p.owners.iter().map(|x| q(x)).collect::<Vec<_>>().join(", "))); }
+    if let Some(v) = p.max_task_days { o.push_str(&format!("max_task_days = {}\n", fmt_num(v))); }
     let c = &p.calendar;
     o.push_str(&format!("\n[calendar]\nholidays = {}\nyear_end = {}\n", if c.holidays_jp { "\"JP\"" } else { "false" }, c.year_end));
     if !c.off.is_empty() { o.push_str(&format!("off = [{}]\n", c.off.iter().map(|d| format!("\"{d}\"")).collect::<Vec<_>>().join(", "))); }
@@ -367,7 +369,7 @@ fn patch(t: &Table, w: &str) -> Result<TaskPatch, Issue> {
     })
 }
 
-const TOP_KEYS: [&str; 21] = ["resources", "key", "stories", "title", "description", "start", "start_half", "deadline", "deadline_task", "deadline_label", "rates", "estimates",
+const TOP_KEYS: [&str; 22] = ["max_task_days", "resources", "key", "stories", "title", "description", "start", "start_half", "deadline", "deadline_task", "deadline_label", "rates", "estimates",
     "round", "default_owner", "owners", "calendar", "colors", "people", "tasks", "scenarios", "$schema"];
 
 fn one<T>(r: Result<T, Issue>) -> Result<T, Vec<Issue>> { r.map_err(|e| vec![e]) }
@@ -465,6 +467,7 @@ fn parse_raw(text: &str) -> Result<Plan, Vec<Issue>> {
         round: raw.get("round").and_then(num).unwrap_or(0.5),
         default_owner: s("default_owner"),
         owners: raw.get("owners").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+        max_task_days: raw.get("max_task_days").and_then(num),
         calendar: CalendarSpec {
             holidays_jp: cal.get("holidays").map(|v| v.as_str() == Some("JP") || v.as_bool() == Some(true)).unwrap_or(true),
             year_end: cal.get("year_end").and_then(|v| v.as_bool()).unwrap_or(true),

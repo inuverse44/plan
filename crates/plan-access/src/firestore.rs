@@ -160,7 +160,7 @@ fn urlenc(s: &str) -> String { s.bytes().map(|b| if b.is_ascii_alphanumeric() ||
 fn new_plan(key: &str, name: &str, start: NaiveDate, like: Option<&Plan>) -> Plan {
     Plan {
         key: key.into(), title: name.into(), description: String::new(), start, start_pm: false, deadline: None, deadline_task: None, deadline_label: None,
-        rates: vec![1.0, 0.8, 0.6], estimates: vec![EstKind::E, EstKind::M, EstKind::P], round: 0.5, default_owner: None, owners: vec![],
+        rates: vec![1.0, 0.8, 0.6], estimates: vec![EstKind::E, EstKind::M, EstKind::P], round: 0.5, default_owner: None, owners: vec![], max_task_days: None,
         calendar: like.map(|p| p.calendar.clone()).unwrap_or(CalendarSpec { holidays_jp: true, year_end: true, off: vec![], freeze: vec![] }),
         colors: Colors { red: 2.0, yellow: 5.0 }, people: like.map(|p| p.people.clone()).unwrap_or_default(), resources: like.map(|p| p.resources.clone()).unwrap_or_default(),
         stories: vec![], tasks: vec![], scenarios: vec![], comments: vec![], unknown_keys: vec![],

@@ -77,6 +77,9 @@ pub fn bdays_between(cal: &BusinessCalendar, a: chrono::NaiveDate, b: chrono::Na
 }
 
 /// Lint the plan (errors and warnings)
+/// Default size limit of one task (person-days, expected estimate); Plan.max_task_days overrides it
+pub const MAX_TASK_DAYS: f64 = 2.0;
+
 pub fn inspect(plan: &Plan, scenarios: &[Scenario]) -> Vec<Issue> {
     let mut out: Vec<Issue> = plan.unknown_keys.iter().map(|k| Issue::warning(format!("unknown key {k}"))).collect();
     let bad_rate = |r: f64| !(r.is_finite() && r > 0.0);
@@ -120,12 +123,18 @@ pub fn inspect(plan: &Plan, scenarios: &[Scenario]) -> Vec<Issue> {
         }
         let eff: Vec<(usize, f64)> = sc.tasks.iter().enumerate().filter(|(_, t)| estimation::present(&t.effort) && !t.done && t.wait.is_none())
             .map(|(i, t)| (i, estimation::value(t.effort.as_ref().unwrap(), EstKind::E, 0.5))).collect();
+        // Tasks over the epic's size limit: smaller tasks are easier to start and to track
+        let max = plan.max_task_days.unwrap_or(MAX_TASK_DAYS);
+        let big: HashSet<usize> = if max > 0.0 { eff.iter().filter(|(_, v)| *v > max).map(|(i, _)| *i).collect() } else { HashSet::new() };
+        for (i, v) in &eff { if big.contains(i) {
+            out.push(Issue::warning(format!("large task ({} person-days > {} per task); consider splitting it into smaller tasks", fmt_num(*v), fmt_num(max))).at(sk, Some(&sc.tasks[*i].id)));
+        } }
         if eff.len() >= 4 {
             let n = eff.len() as f64;
             let mu = eff.iter().map(|x| x.1).sum::<f64>() / n;
             let sd = (eff.iter().map(|x| (x.1 - mu).powi(2)).sum::<f64>() / n).sqrt();
             for (i, v) in &eff {
-                if *v > mu + sd && *v >= 5.0 {
+                if *v > mu + sd && *v >= 5.0 && !big.contains(i) {
                     out.push(Issue::warning(format!("god activity ({} person-days > mean + 1σ {:.1}); consider splitting it", fmt_num(*v), mu + sd)).at(sk, Some(&sc.tasks[*i].id)));
                 }
             }

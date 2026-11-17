@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS epics (
   key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
   start TEXT NOT NULL, start_pm INTEGER NOT NULL DEFAULT 0, deadline TEXT, deadline_task TEXT, deadline_label TEXT,
   rates TEXT NOT NULL DEFAULT '[1,0.8,0.6]', estimates TEXT NOT NULL DEFAULT '["e","m","p"]', round REAL NOT NULL DEFAULT 0.5,
-  default_owner TEXT, owners TEXT NOT NULL DEFAULT '[]', red REAL NOT NULL DEFAULT 2, yellow REAL NOT NULL DEFAULT 5, sort INTEGER NOT NULL DEFAULT 0);
+  default_owner TEXT, owners TEXT NOT NULL DEFAULT '[]', max_task_days REAL, red REAL NOT NULL DEFAULT 2, yellow REAL NOT NULL DEFAULT 5, sort INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS stories (
   epic TEXT NOT NULL, key TEXT NOT NULL, name TEXT NOT NULL, purpose TEXT NOT NULL DEFAULT '', dod TEXT NOT NULL DEFAULT '',
   sort INTEGER NOT NULL, PRIMARY KEY (epic, key));
@@ -89,6 +89,8 @@ impl SqlitePlans {
         }
         let has: bool = conn.prepare("SELECT 1 FROM pragma_table_info('epics') WHERE name='owners'").map_err(e)?.exists([]).map_err(e)?;
         if !has { conn.execute_batch("ALTER TABLE epics ADD COLUMN owners TEXT NOT NULL DEFAULT '[]'").map_err(e)?; }
+        let has: bool = conn.prepare("SELECT 1 FROM pragma_table_info('epics') WHERE name='max_task_days'").map_err(e)?.exists([]).map_err(e)?;
+        if !has { conn.execute_batch("ALTER TABLE epics ADD COLUMN max_task_days REAL").map_err(e)?; }
         // The old forms: tasks.prod → tasks.needs = ["prod"], the freeze table → the resource "prod"
         conn.execute_batch(&format!("BEGIN;
             UPDATE tasks SET needs = '[\"{PROD}\"]', prod = 0 WHERE prod = 1 AND (needs IS NULL OR needs = '[]');
@@ -127,7 +129,8 @@ impl SqlitePlans {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<String>>(6)?, r.get::<_, String>(7)?, r.get::<_, String>(8)?, r.get::<_, f64>(9)?, r.get::<_, Option<String>>(10)?, r.get::<_, f64>(11)?, r.get::<_, f64>(12)?))
         }).optional().map_err(e)?.ok_or_else(|| vec![Issue::error(format!("no epic {epic}"))])?;
-        let owners: Vec<String> = json_text("epics.owners", &c.query_row("SELECT owners FROM epics WHERE key=?", [epic], |r| r.get::<_, String>(0)).map_err(e)?)?;
+        let (owners, max_task_days) = c.query_row("SELECT owners, max_task_days FROM epics WHERE key=?", [epic], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<f64>>(1)?))).map_err(e)?;
+        let owners: Vec<String> = json_text("epics.owners", &owners)?;
         let (calendar, people, resources) = Self::common(c).map_err(e)?;
         let stories = c.prepare("SELECT key, name, purpose, dod FROM stories WHERE epic=? ORDER BY sort").map_err(e)?
             .query_map([epic], |r| Ok(Story { key: r.get(0)?, name: r.get(1)?, purpose: r.get(2)?, dod: r.get(3)? })).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(|x| e(format!("stories of {epic}: {x}")))?;
@@ -160,7 +163,7 @@ impl SqlitePlans {
             deadline: deadline.map(|x| d(Some(x.clone())).ok_or_else(|| e(format!("deadline is not a date: {x}")))).transpose()?, deadline_task, deadline_label,
             rates: json_text("epics.rates", &rates)?,
             estimates: json_text::<Vec<String>>("epics.estimates", &ests)?.iter().map(|x| EstKind::parse(x).ok_or_else(|| e(format!("unknown estimate kind {x}")))).collect::<Result<_, _>>()?,
-            round, default_owner, owners, calendar, colors: Colors { red, yellow }, people, resources, stories, tasks, scenarios, comments, unknown_keys: vec![],
+            round, default_owner, owners, max_task_days, calendar, colors: Colors { red, yellow }, people, resources, stories, tasks, scenarios, comments, unknown_keys: vec![],
         })
     }
 
@@ -172,7 +175,7 @@ impl SqlitePlans {
             params![k, p.title, p.description, p.start.to_string(), p.start_pm, p.deadline.map(|x| x.to_string()), p.deadline_task, p.deadline_label,
                 serde_json::to_string(&p.rates).unwrap(), serde_json::to_string(&p.estimates.iter().map(|e| e.code()).collect::<Vec<_>>()).unwrap(),
                 p.round, p.default_owner, p.colors.red, p.colors.yellow])?;
-        tx.execute("UPDATE epics SET owners=?2 WHERE key=?1", params![k, serde_json::to_string(&p.owners).unwrap()])?;
+        tx.execute("UPDATE epics SET owners=?2, max_task_days=?3 WHERE key=?1", params![k, serde_json::to_string(&p.owners).unwrap(), p.max_task_days])?;
         for t in ["stories", "tasks", "deps", "scenarios", "comments"] { tx.execute(&format!("DELETE FROM {t} WHERE epic=?"), [k])?; }
         for (i, s) in p.stories.iter().enumerate() {
             tx.execute("INSERT INTO stories (epic, key, name, purpose, dod, sort) VALUES (?,?,?,?,?,?)", params![k, s.key, s.name, s.purpose, s.dod, i as i64])?;

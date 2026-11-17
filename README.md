@@ -146,6 +146,7 @@ The Help page in the UI shows the formulas with references.
 | | `rates`, `estimates`, `round` | utilizations, estimate kinds (o, m, e, p), rounding |
 | | `default_owner` | owner of tasks without one |
 | | `owners` | who is responsible for the epic (several allowed; shown in the epic list). Tasks keep their own owners |
+| | `max_task_days` | tasks with a larger expected effort (person-days) get a warning to split them; default 2, `0` turns it off |
 | `[calendar]` | `holidays`, `year_end`, `off` | calendar |
 | `[colors]` | `red`, `yellow` | float thresholds (days) |
 | `[people.NAME]` | `leave`, `rate` | days off, a fixed utilization for this person |
@@ -153,7 +154,7 @@ The Help page in the UI shows the formulas with references.
 | `[[tasks]]` | `id`, `name`, `short`, `ticket`, `deliverable`, `group`, `note` | identity and labels |
 | | `effort` or `wait` | person-days or business days; a number or a triple. Neither = milestone |
 | | `owner`, `after` | owner(s), predecessors |
-| | `needs`, `not_before`, `fixed`, `done`, `actual_start`, `actual_finish` | resources it needs, earliest start, fixed date, done, actual dates (drawn as grey bars) |
+| | `needs`, `not_before`, `fixed`, `done`, `actual_start`, `actual_finish` | resources it needs, earliest start, fixed date, done, actual dates (drawn as grey bars; marking a task done without `actual_finish` records today) |
 
 Older plans with `prod = true` and `calendar.freeze` still read: they become `needs = ["prod"]` and `[resources.prod]` (label "Release freeze"), and are written back in the new form.
 | `[scenarios.KEY]` | `name`, `note`, `drop`, `set.ID`, `add` | alternative plans as differences from the base |

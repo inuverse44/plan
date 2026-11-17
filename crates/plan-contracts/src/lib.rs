@@ -232,6 +232,9 @@ pub struct Plan {
     /// Who is responsible for the epic (several allowed). Tasks keep their own owners
     #[serde(default)]
     pub owners: Vec<String>,
+    /// Tasks whose expected effort is larger than this (person-days) get a warning to split them. None: the default (2); 0: no warning
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_task_days: Option<f64>,
     pub calendar: CalendarSpec,
     pub colors: Colors,
     pub people: BTreeMap<String, Person>,
@@ -581,6 +584,8 @@ pub struct EpicSettings {
     pub rates: Option<Vec<f64>>,
     pub default_owner: Option<Option<String>>,
     pub owners: Option<Vec<String>>,
+    /// null: back to the default
+    pub max_task_days: Option<Option<f64>>,
 }
 
 /// One edit. With scenario = Some, it is written as that scenario's difference (the base tasks stay).

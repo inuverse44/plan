@@ -289,12 +289,14 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
       <div class="row2"><label>Start<input type="date" data-e="start" value="${plan.start}"></label><label>Deadline<input type="date" data-e="deadline" value="${plan.deadline || ''}"></label></div>
       <div class="row2"><label>Target task<select data-e="deadline_task"><option value="">Finish</option>${plan.tasks.map(t => `<option value="${esc(t.id)}" ${plan.deadline_task === t.id ? 'selected' : ''}>${esc(t.short || t.name)}</option>`).join('')}</select></label>
         <label>Default owner<input data-e="default_owner" value="${esc(plan.default_owner || '')}"></label></div>
+      <label title="Tasks larger than this get a warning to split them. Empty: 2; 0: no warning">Max task size (person-days)<input type="number" min="0" step="0.5" data-e="max_task_days" value="${plan.max_task_days ?? ''}" placeholder="2"></label>
       ${sc ? `<label>Scenario name<input data-sc="name" value="${esc(sc.name)}"></label>` : ''}
     </div>${sc ? `<button class="danger" id="del-sc">Delete scenario</button>` : ''}${LIVE ? `<button class="danger" id="del-epic">Delete epic</button>` : ''}`;
     q(el, '.close').onclick = () => { st.settings = false; render() };
     el.querySelectorAll<HTMLInputElement>('[data-e]').forEach(i => i.onchange = () => {
       const f = i.dataset.e!, v = i.value.trim(), s: Record<string, string | null> = {};
       if (f === 'owners') return edit([{ op: 'set_epic', settings: { owners: v.split(/[,、\s]+/).filter(Boolean) } }]);
+      if (f === 'max_task_days') return edit([{ op: 'set_epic', settings: { max_task_days: v === '' ? null : Number(v) } }]);
       if (f === 'deadline' || f === 'deadline_task' || f === 'default_owner') s[f] = v || null; else s[f] = v;
       edit([{ op: 'set_epic', settings: s as EpicSettings }]);
     });
