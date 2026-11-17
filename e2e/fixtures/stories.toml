@@ -1,0 +1,54 @@
+# A small fictional plan with stories, used by the UI tests (e2e/). Today is fixed at 2026-11-18 in the tests.
+title = "Office move"
+description = "Move the team to the new floor"
+start = "2026-11-16"
+deadline = "2026-12-11"
+deadline_task = "MOVE"
+deadline_label = "Moving day"
+rates = [1.0]
+estimates = ["e", "m", "p"]
+default_owner = "alice"
+owners = ["alice"]
+
+[calendar]
+holidays = "JP"
+
+[people.alice]
+leave = []
+
+[people.bob]
+leave = []
+
+[[stories]]
+key = "S1"
+name = "Prepare"
+
+[[stories]]
+key = "S2"
+name = "Move"
+
+[[tasks]]
+id = "PACK"
+name = "Pack the boxes"
+short = "Pack"
+story = "S1"
+deliverable = "Boxes"
+effort = [1, 1.5, 2]
+
+[[tasks]]
+id = "BOOK"
+name = "Book the movers"
+short = "Book"
+story = "S1"
+owner = "bob"
+deliverable = "Booking"
+effort = [0.5, 1, 1.5]
+
+[[tasks]]
+id = "MOVE"
+name = "Moving day"
+short = "Move"
+story = "S2"
+deliverable = "Desks in place"
+effort = [1, 1, 1]
+after = ["PACK", "BOOK"]

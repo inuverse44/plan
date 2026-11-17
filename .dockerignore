@@ -4,3 +4,4 @@ data/
 web/node_modules/
 web/pkg/
 web/ui/
+e2e/

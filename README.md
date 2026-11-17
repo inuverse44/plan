@@ -178,6 +178,16 @@ token_cmd=gcloud auth print-identity-token --impersonate-service-account=CLI_SA 
 
 `cargo test --release` checks, among others, that `examples/sample.toml` gives the same start, finish, float, free float and risk for all 27 runs as the original Python implementation (`tests/fixtures/sample.expected.json`), and that holidays for 2025–2030 match the Python `holidays` package.
 
+The UI has its own tests in `e2e/` ([Playwright](https://playwright.dev), headless Chromium). They start `plan serve` on a fresh SQLite (`e2e/.tmp/plan.db`) with the epics in `e2e/fixtures/` and `examples/sample.toml`, then hover, drag, save and resize the page like a person would and check what is drawn. Today is fixed at 2026-11-18 in the browser (`TODAY` in `e2e/tests/helpers.ts`), so they do not depend on the real clock.
+
+```sh
+./build.sh                                   # the tests run target/release/plan
+cd e2e && npm ci && npx playwright install chromium   # once
+npm test                                     # all cases; npx playwright test -g "tooltip" for some
+```
+
+CI runs them on every push after `cargo test`; a failure stops the deploy and keeps the report (screenshots, traces) as the `e2e-report` artifact. Each case names the issue it came from; add one with each UI fix.
+
 ## Layout
 
 The code is split by volatility following *The Method* (Righting Software, part 1). See [docs/design.md](docs/design.md).
@@ -191,6 +201,7 @@ The code is split by volatility following *The Method* (Righting Software, part 
 | `crates/plan-cli` | Client | the `plan` command, the HTTP server (embeds the UI and the WASM) and the MCP server |
 | `crates/plan-web` | Client | the WASM entry point used by the UI |
 | `web/` | Client | the UI in TypeScript without a framework (`src/` → `ui/` by `tsc`) |
+| `e2e/` | tests | UI tests (Playwright) against `plan serve` |
 
 ## License
 

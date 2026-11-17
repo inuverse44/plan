@@ -6,3 +6,7 @@ data/
 web/ui/
 web/node_modules/
 .claude/
+e2e/node_modules/
+e2e/.tmp/
+e2e/test-results/
+e2e/playwright-report/
