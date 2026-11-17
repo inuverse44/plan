@@ -405,7 +405,6 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     }
   });
   $('undo').onclick = undo; $('redo').onclick = redo; $('reset').onclick = reset; $('save').onclick = saveChanges;
-  $('back').onclick = () => location.hash = '#/';
   // Light/dark toggle (remembered; follows the system until chosen)
   const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
   document.querySelectorAll<HTMLElement>('.theme').forEach(b => b.onclick = () => {
@@ -437,7 +436,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
       version = v;
     } catch { }
   }, 2000);
-  if (!LIVE) $('back').hidden = true;
+  if (!LIVE) { $('back').removeAttribute('href'); $('back').title = 'Plan'; $('back').setAttribute('aria-label', 'Plan') }
   route();
 })();
 
