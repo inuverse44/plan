@@ -59,6 +59,25 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     if (ho) ho.onchange = () => { st.owner = ho.value; save(); home() };
     $('home-list').querySelectorAll<HTMLElement>('tr[data-k]').forEach(tr => tr.onclick = () => location.hash = '#/e/' + encodeURIComponent(tr.dataset.k!));
     $<HTMLInputElement>('new-start').value ||= new Date().toISOString().slice(0, 10);
+    nextCard();
+  }
+  // Task to select when the next epic opens (from the Next card)
+  let openSel: string | null = null;
+  // The one task to do now for the chosen owner, and what needs action (computed on the server across epics; today is the browser's day)
+  async function nextCard() {
+    const el = $('home-next'), who = st.owner;
+    if (!LIVE || !who) { el.hidden = true; return }
+    const res = await api<Agenda>(`/api/agenda?owner=${encodeURIComponent(who)}&today=${P.iso(new Date())}`);
+    if (!res.ok || st.owner !== who || st.epic) return;
+    const a = res.data, fl = (t: AgendaTask) => t.float_days === 0 ? '<span style="color:var(--f-crit)">critical</span>' : `float ${t.float_days}d`;
+    const line = (t: AgendaTask) => `${mdw(t.start)} → ${mdw(t.finish)} · ${fl(t)} · ${esc(t.epic_name)}${t.started ? ' · started' : ''}`;
+    el.innerHTML = `<div class="k">Next for ${esc(who)}</div>` + (a.next
+      ? `<div class="next" data-go="${esc(a.next.epic)}" data-task="${esc(a.next.id)}"><b>${esc(a.next.id)} ${esc(a.next.name)}</b><span class="meta">${line(a.next)}</span></div>`
+        + (a.then ? `<div class="meta">Then: ${esc(a.then.id)} ${esc(a.then.name)} · ${line(a.then)}</div>` : '')
+      : '<div class="meta">Nothing ready</div>')
+      + (a.risks.length ? `<div class="k" style="margin-top:4px">Needs action</div><ul>${a.risks.map(r => `<li>${esc(r.message)}</li>`).join('')}</ul>` : '');
+    el.hidden = false;
+    el.querySelectorAll<HTMLElement>('[data-go]').forEach(n => n.onclick = () => { openSel = n.dataset.task!; location.hash = '#/e/' + encodeURIComponent(n.dataset.go!) });
   }
   $('new-epic').onsubmit = async e => {
     e.preventDefault();
@@ -86,7 +105,8 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   }
   async function openEpic(k: string, keepChanges: boolean) {
     $('app-home').hidden = true; $('app-help').hidden = true; $('app-epic').hidden = false;
-    if (st.epic !== k) { Object.assign(st, { epic: k, s: '', r: '', sel: null, selStory: null, changes: {}, hist: {}, fut: {} }) }
+    if (st.epic !== k) { Object.assign(st, { epic: k, s: '', r: '', sel: openSel, selStory: null, changes: {}, hist: {}, fut: {} }) }
+    openSel = null;
     if (boot.mode === 'live') {
       const res = await api<{ plan: Plan; version: number }>('/api/epic/' + encodeURIComponent(k));
       if (!res.ok) {

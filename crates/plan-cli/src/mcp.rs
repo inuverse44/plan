@@ -57,6 +57,10 @@ pub fn tools() -> Value {
           "inputSchema": schema(json!({ "epic": { "type": "string", "description": "only this epic (default: all)" }, "limit": { "type": "integer", "description": "default 50" } }), &[]), "annotations": ro },
         { "name": "load", "description": "People across epics: each epic's default run (first scenario, first utilization, e) added up per person and day (1 = one person's whole day). Lists the days over 100% with the share of each epic. Epics are still scheduled on their own; this only adds the loads up.",
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "only this person (default: everyone)" } }), &[]), "annotations": ro },
+        { "name": "next", "description": "The single task a person should do now, across all epics: ready (predecessors done), not done, least float, then earliest start, then earliest deadline. Also the one after it. Each epic's default run.",
+          "inputSchema": schema(json!({ "person": { "type": "string", "description": "owner name (default: everyone)" } }), &[]), "annotations": ro },
+        { "name": "today", "description": "A daily briefing for a person across all epics: the next task, tasks planned to start by today but not started, tasks due by Sunday, and risks (late starts, epics planned past their deadline, epics that cannot be evaluated). Dates are the local today.",
+          "inputSchema": schema(json!({ "person": { "type": "string", "description": "owner name (default: everyone)" } }), &[]), "annotations": ro },
         { "name": "delete_epic", "description": "Delete a whole epic (its stories, tasks and scenarios). Its content stays in the change history (log). Ask the person before using it.",
           "inputSchema": schema(json!({ "epic": { "type": "string", "description": "the epic key" } }), &["epic"]),
           "annotations": { "readOnlyHint": false, "destructiveHint": true, "idempotentHint": true } },
@@ -82,6 +86,8 @@ pub fn call(name: &str, args: &Value) -> Result<Value, Vec<Issue>> {
         }
         "check" => { let (ok, is) = crate::check_data(need("epic")?); if ok { Ok(json!({ "issues": is })) } else { Err(is) } }
         "load" => crate::load_data(s("person")),
+        "next" => crate::agenda_data(s("person")).map(|d| json!({ "next": d["next"], "then": d["then"] })),
+        "today" => crate::agenda_data(s("person")),
         "log" => crate::log_data(s("epic"), args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize),
         "apply" => {
             let ops = crate::edits::parse(args.get("ops").cloned().unwrap_or(Value::Null))?;

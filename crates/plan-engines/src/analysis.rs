@@ -76,10 +76,10 @@ pub fn bdays_between(cal: &BusinessCalendar, a: chrono::NaiveDate, b: chrono::Na
     if a <= b { cal.days.iter().filter(|x| a < **x && **x <= b).count() as i64 } else { -(cal.days.iter().filter(|x| b < **x && **x <= a).count() as i64) }
 }
 
-/// Lint the plan (errors and warnings)
 /// Default size limit of one task (person-days, expected estimate); Plan.max_task_days overrides it
 pub const MAX_TASK_DAYS: f64 = 2.0;
 
+/// Lint the plan (errors and warnings)
 pub fn inspect(plan: &Plan, scenarios: &[Scenario]) -> Vec<Issue> {
     let mut out: Vec<Issue> = plan.unknown_keys.iter().map(|k| Issue::warning(format!("unknown key {k}"))).collect();
     let bad_rate = |r: f64| !(r.is_finite() && r > 0.0);

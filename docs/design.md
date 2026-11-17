@@ -30,7 +30,7 @@ The structure follows *The Method* (Löwy, *Righting Software*, part 1): each ar
 | Which scenarios are compared | high | `ScenarioEngine` |
 | How durations are estimated (PERT, rounding, utilization) | medium | `EstimationEngine` |
 | How tasks are placed (people, resources and their off periods, ordering rule) | medium | `SchedulingEngine` |
-| How a plan is judged (float colors, risk metrics, lint) | medium | `AnalysisEngine` |
+| How a plan is judged (float colors, risk metrics, lint, what to do next) | medium | `AnalysisEngine` (`analysis`, `agenda`) |
 | Where the calendar comes from (holiday rules) | low | `CalendarAccess` |
 
 Stable: the unit of calculation is one epic; dependencies stay inside an epic; time is counted in business half-days.

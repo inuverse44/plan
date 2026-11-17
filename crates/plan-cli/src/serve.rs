@@ -5,6 +5,7 @@
 //!   GET  /api/loads                       every epic's load (default run), to see people across epics
 //!   POST /api/epics          {key,name,start}
 //!   GET  /api/epic/KEY                    one epic's plan (JSON)
+//!   GET  /api/agenda?owner=NAME&today=YYYY-MM-DD   next task, starting today, due this week, risks
 //!   POST /api/epic/KEY/ops   {ops:[EditOp]}
 //!   POST /api/epic/KEY/save  {scenario,rate,est,changes}   write moves tried in the UI into the plan
 //!   POST /api/epic/KEY/delete
@@ -78,6 +79,12 @@ pub fn run(port: u16, open: bool) {
             (Method::Get, [""]) => reply(req, "text/html; charset=utf-8", web::live_page().into_bytes()),
             (Method::Get, ["api", "version"]) => json(req, serde_json::json!({ "version": ed.version() })),
             (Method::Get, ["api", "epics"]) => result(req, ed.epics().map(|v| serde_json::to_value(v).unwrap())),
+            (Method::Get, ["api", "agenda"]) => {
+                // today comes from the browser (its local day); the server's clock may be in another time zone
+                let today = qp("today").and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()).unwrap_or_else(|| chrono::Local::now().date_naive());
+                let owner = qp("owner").filter(|o| !o.is_empty());
+                result(req, pm.agenda(owner.as_deref(), today).map(|v| serde_json::to_value(v).unwrap()))
+            }
             (Method::Get, ["api", "loads"]) => result(req, pm.epic_loads().map(|v| serde_json::to_value(v).unwrap())),
             (Method::Post, ["api", "epics"]) => {
                 let r = (|| {

@@ -2,13 +2,14 @@
 //!
 //!   read    plan epics | dump E | check E | calc E | show E [-s scenario -r 0.6 -e e] | why E TASK | json E | log [E]
 //!           plan load [PERSON]  people across epics: each epic's default run added up per day, days over 100%
+//!           plan next [PERSON]  the single task to do now | today [PERSON]  next, starting today, due this week, risks
 //!   create  plan epic add KEY NAME START | epic rm KEY | import F.toml [--key K] | new F.toml (a TOML template)
 //!   edit    plan task add E KEY k=v … | task set E KEY k=v … [-s scenario] | task rm E KEY
 //!           plan dep add E TASK PRED | dep rm E TASK PRED | story set E KEY name=… | scenario clone E FROM|- KEY NAME | scenario rm E KEY
 //!   batch   plan apply E ops.json ("-" for stdin)  apply a list of edits at once; any error writes nothing
 //!   machine every command accepts --json and returns {"ok":true,"data":…} or {"ok":false,"issues":[…]}
 //!   ui      plan serve [--port N] [--no-open] | export E [out.html]
-//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load apply delete_epic) for AI assistants
+//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load next today apply delete_epic) for AI assistants
 //!   k=v     name short story ticket deliverable note owner=a,b after=a,b needs=prod,db effort=1 or 1,2,4 wait=2 not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
 //!   E may be a path to a .toml file: the file is read directly, without the DB
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local
@@ -183,6 +184,32 @@ pub fn load_data(person: Option<&str>) -> Result<serde_json::Value, Vec<Issue>> 
         "epics": ls.iter().map(|l| serde_json::json!({ "epic": l.epic, "name": l.name, "scenario": l.scenario, "rate": l.rate, "est": l.est, "issues": l.issues })).collect::<Vec<_>>(),
         "people": people,
     }))
+}
+
+/// The agenda across epics for one person (None: everyone), today in the local time zone
+pub fn agenda_data(person: Option<&str>) -> Result<serde_json::Value, Vec<Issue>> {
+    let a = PlanningManager::new(store(), Arc::new(JpRuleCalendar)).agenda(person, chrono::Local::now().date_naive())?;
+    Ok(serde_json::to_value(a).unwrap())
+}
+
+fn agenda_line(t: &AgendaTask) -> String {
+    let fl = if t.float_days == 0.0 { "critical".to_string() } else { format!("float {}d", fmt_num(t.float_days)) };
+    format!("{} {} ({}{}) · {} → {} · {fl}{}", t.id, t.name, t.epic, if t.ticket.is_empty() { String::new() } else { format!(", {}", t.ticket) }, t.start, t.finish, if t.started { " · started" } else { "" })
+}
+
+/// plan next [PERSON]: the single task to do now. plan today [PERSON]: next, starting, due this week, risks
+fn agenda(cmd: &str, person: Option<&str>) {
+    let d = agenda_data(person).unwrap_or_else(|e| die(&e));
+    if json() { return say("", if cmd == "next" { serde_json::json!({ "next": d["next"], "then": d["then"] }) } else { d }); }
+    let a: Agenda = serde_json::from_value(d).unwrap();
+    let who = a.owner.clone().unwrap_or_else(|| "everyone".into());
+    match &a.next { Some(t) => println!("next ({who}): {}", agenda_line(t)), None => println!("next ({who}): nothing ready") }
+    if let Some(t) = &a.then { println!("then: {}", agenda_line(t)); }
+    if cmd == "next" { return; }
+    let list = |title: &str, v: &[AgendaTask]| { if !v.is_empty() { println!("\n{title}"); for t in v { println!("- {}", agenda_line(t)); } } };
+    list(&format!("planned to start by {} and not started", a.today), &a.start_today);
+    list("due this week", &a.due_this_week);
+    if !a.risks.is_empty() { println!("\nrisks"); for r in &a.risks { println!("- [{}] {}", r.epic, r.message); } }
 }
 
 fn load(person: Option<&str>) {
@@ -362,7 +389,7 @@ fn main() {
             "--port" => { i += 1; port = args.get(i).and_then(|x| x.parse().ok()).unwrap_or(0) }
             "--no-open" => open = false,
             "--json" => {}
-            "-h" | "--help" => { println!("{}", include_str!("main.rs").lines().take(13).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n")); return }
+            "-h" | "--help" => { println!("{}", include_str!("main.rs").lines().take(14).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n")); return }
             x => pos.push(x.to_string()),
         }
         i += 1;
@@ -417,6 +444,7 @@ fn main() {
             edit(&a(1), ops)
         }
         "load" => load(pos.get(1).map(String::as_str)),
+        "next" | "today" => agenda(&cmd, pos.get(1).map(String::as_str)),
         "log" => {
             if json() { return say("", log_data(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e))); }
             let hs = PlanEditingManager::new(store()).history(pos.get(1).map(String::as_str), 50).unwrap_or_else(|e| die(&e));

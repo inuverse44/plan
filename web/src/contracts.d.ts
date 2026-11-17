@@ -172,3 +172,55 @@ people: Array<string>, stories: number, tasks: number, scenarios: number, };
 
 declare type HistoryEntry = { id: number, at: string, actor: string, epic: string, op: string, payload: string, };
 
+declare type AgendaTask = { epic: string, epic_name: string, id: string, name: string, ticket: string, owners: Array<string>, 
+/**
+ * Planned start and finish days
+ */
+start: string, finish: string, 
+/**
+ * Float in days (0: on the critical path)
+ */
+float_days: number, 
+/**
+ * All its predecessors are done
+ */
+ready: boolean, 
+/**
+ * It has an actual start
+ */
+started: boolean, deadline: string | null, };
+
+declare type AgendaRisk = { epic: string, task: string | null, message: string, };
+
+declare type EpicStatus = { epic: string, name: string, deadline: string | null, 
+/**
+ * The day compared with the deadline (the deadline task's finish, or the end)
+ */
+target: string | null, 
+/**
+ * Business days from target to deadline (negative: late)
+ */
+slack_days: number | null, 
+/**
+ * Why it could not be evaluated (then it has no tasks in the agenda)
+ */
+issues: Array<Issue>, };
+
+declare type Agenda = { owner: string | null, today: string, 
+/**
+ * The single task to do now: ready, not done, least float, then earliest start, then earliest deadline
+ */
+next: AgendaTask | null, 
+/**
+ * The one after it
+ */
+then: AgendaTask | null, 
+/**
+ * Planned to start today or earlier, not started yet
+ */
+start_today: Array<AgendaTask>, 
+/**
+ * Planned to finish by the end of this week (Sunday), not done
+ */
+due_this_week: Array<AgendaTask>, risks: Array<AgendaRisk>, epics: Array<EpicStatus>, };
+

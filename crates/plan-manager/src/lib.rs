@@ -3,7 +3,7 @@
 use plan_access::{CalendarAccess, PlanAccess};
 use std::sync::Arc;
 use plan_contracts::*;
-use plan_engines::{analysis, estimation, scenario, scheduling};
+use plan_engines::{agenda, analysis, estimation, scenario, scheduling};
 
 pub struct PlanningManager {
     plan_access: Arc<dyn PlanAccess + Send + Sync>,
@@ -62,15 +62,33 @@ impl PlanningManager {
     pub fn epic_loads(&self) -> Result<Vec<EpicLoad>, Vec<Issue>> {
         Ok(self.plan_access.list_epics()?.into_iter().map(|e| {
             let one = || -> Result<EpicLoad, Vec<Issue>> {
-                let l = self.load(&e.key)?;
-                let issues = analysis::inspect(&l.plan, &l.scenarios);
-                if issues.iter().any(|i| i.level == Level::Error) { return Err(issues); }
-                let (sc, rate, est) = scenario::default_run(&l.plan, &l.scenarios).ok_or_else(|| vec![Issue::error("no scenario")])?;
-                let r = run(&l, sc, rate, est, &[]).map_err(|i| vec![i])?;
-                Ok(EpicLoad { epic: e.key.clone(), name: l.plan.title.clone(), scenario: sc.key.clone(), rate, est, load: r.load, issues: vec![] })
+                let (l, r) = self.default_run(&e.key)?;
+                Ok(EpicLoad { epic: e.key.clone(), name: l.plan.title.clone(), scenario: r.scenario.clone(), rate: r.rate, est: r.est, load: r.load, issues: vec![] })
             };
             one().unwrap_or_else(|is| EpicLoad { epic: e.key.clone(), name: e.name.clone(), scenario: String::new(), rate: 1.0, est: EstKind::E, load: Default::default(), issues: is })
         }).collect())
+    }
+
+    /// What one person (None: everyone) should look at on `today`, across every epic's default run
+    pub fn agenda(&self, owner: Option<&str>, today: chrono::NaiveDate) -> Result<Agenda, Vec<Issue>> {
+        let (mut items, mut epics) = (vec![], vec![]);
+        for e in self.plan_access.list_epics()? {
+            match self.default_run(&e.key) {
+                Ok((l, r)) => { let (mut it, st) = agenda::epic_items(&e.key, &l.plan.title, l.plan.deadline, &r, &l.cal); items.append(&mut it); epics.push(st); }
+                Err(is) => epics.push(EpicStatus { epic: e.key.clone(), name: e.name.clone(), deadline: e.deadline, target: None, slack_days: None, issues: is }),
+            }
+        }
+        Ok(agenda::build(owner, today, items, epics))
+    }
+
+    /// An epic's default run (first scenario, first utilization, e when present); errors if the plan has errors
+    fn default_run(&self, epic: &str) -> Result<(Loaded, RunResult), Vec<Issue>> {
+        let l = self.load(epic)?;
+        let issues = analysis::inspect(&l.plan, &l.scenarios);
+        if issues.iter().any(|i| i.level == Level::Error) { return Err(issues); }
+        let (sc, rate, est) = scenario::default_run(&l.plan, &l.scenarios).ok_or_else(|| vec![Issue::error("no scenario")])?;
+        let r = run(&l, sc, rate, est, &[]).map_err(|i| vec![i])?;
+        Ok((l, r))
     }
 
     pub fn what_if(&self, epic: &str, scenario_key: &str, rate: f64, est: EstKind, changes: &[Change]) -> Result<RunResult, Vec<Issue>> {
