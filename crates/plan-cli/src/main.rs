@@ -33,6 +33,7 @@ fn say(human: impl std::fmt::Display, data: serde_json::Value) {
 }
 
 mod edits;
+mod http;
 mod mcp;
 mod progress;
 mod serve;

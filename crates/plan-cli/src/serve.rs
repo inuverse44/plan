@@ -25,20 +25,14 @@ use plan_manager::{PlanEditingManager, PlanningManager};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tiny_http::{Header, Method, Response, Server};
+use crate::http::{Request, Server};
 
 const IDLE: Duration = Duration::from_secs(1800);
 
-fn reply(req: tiny_http::Request, ctype: &str, body: Vec<u8>) {
-    let r = Response::from_data(body)
-        .with_header(Header::from_bytes("Content-Type", ctype).unwrap())
-        .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
-        // Do not keep connections open: they filled Chrome's limit of 6 per host and the UI hung while loading
-        .with_header(Header::from_bytes("Connection", "close").unwrap());
-    let _ = req.respond(r);
-}
-fn json(req: tiny_http::Request, v: serde_json::Value) { reply(req, "application/json; charset=utf-8", v.to_string().into_bytes()) }
-fn result(req: tiny_http::Request, r: Result<serde_json::Value, Vec<Issue>>) {
+// Every response closes its connection (no-store, Connection: close): open connections filled Chrome's limit of 6 per host and the UI hung while loading
+fn reply(req: Request, ctype: &str, body: Vec<u8>) { req.respond(ctype, &body) }
+fn json(req: Request, v: serde_json::Value) { reply(req, "application/json; charset=utf-8", v.to_string().into_bytes()) }
+fn result(req: Request, r: Result<serde_json::Value, Vec<Issue>>) {
     json(req, match r { Ok(v) => serde_json::json!({ "ok": true, "data": v }), Err(e) => serde_json::json!({ "ok": false, "issues": e }) })
 }
 
@@ -57,8 +51,8 @@ pub fn run(port: u16, open: bool) {
     let ed = PlanEditingManager::new(st.clone());
     let pm = PlanningManager::new(st.clone(), Arc::new(JpRuleCalendar));
     let cloud = std::env::var("PORT").ok().and_then(|p| p.parse::<u16>().ok());
-    let server = match cloud { Some(p) => Server::http(("0.0.0.0", p)), None => Server::http(("127.0.0.1", port)) }.expect("cannot open the port");
-    let url = format!("http://{}/", server.server_addr().to_ip().unwrap());
+    let server = match cloud { Some(p) => Server::bind(("0.0.0.0", p)), None => Server::bind(("127.0.0.1", port)) }.expect("cannot open the port");
+    let url = format!("http://{}/", server.local_addr().unwrap());
     println!("listening on {url} (store: {place}{})", if cloud.is_some() { "" } else { "; stops after 30 idle minutes" });
     if open && cloud.is_none() { let _ = std::process::Command::new("open").arg(&url).status(); }
     let last = Arc::new(AtomicU64::new(0));
@@ -67,43 +61,42 @@ pub fn run(port: u16, open: bool) {
         std::thread::sleep(Duration::from_secs(30));
         if cloud.is_none() && start.elapsed().as_secs() - last.load(Ordering::Relaxed) > IDLE.as_secs() { std::process::exit(0) }
     }); }
-    for mut req in server.incoming_requests() {
+    for req in server.incoming() {
         last.store(start.elapsed().as_secs(), Ordering::Relaxed);
-        let url = req.url().split('?').next().unwrap_or("/").to_string();
-        let mut body = String::new();
-        if *req.method() == Method::Post { let _ = std::io::Read::read_to_string(req.as_reader(), &mut body); }
-        let b: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        let url = req.url.split('?').next().unwrap_or("/").to_string();
+        let b: serde_json::Value = if req.method == "POST" { serde_json::from_str(&req.body).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null };
         let parts: Vec<&str> = url.trim_matches('/').split('/').collect();
         let actor = b["actor"].as_str().filter(|a| ["cli", "web", "push", "import", "mcp"].contains(a)).unwrap_or("web").to_string();
-        let query = req.url().split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
+        let query = req.url.split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
         let qp = |k: &str| query.split('&').filter_map(|kv| kv.split_once('=')).find(|(a, _)| *a == k).map(|(_, v)| decode(v));
-        match (req.method().clone(), parts.as_slice()) {
-            (Method::Get, [""]) => reply(req, "text/html; charset=utf-8", web::live_page().into_bytes()),
-            (Method::Get, ["api", "version"]) => json(req, serde_json::json!({ "version": ed.version() })),
-            (Method::Get, ["api", "epics"]) => result(req, ed.epics().map(|v| serde_json::to_value(v).unwrap())),
-            (Method::Get, ["api", "agenda"]) => {
+        let method = req.method.clone();
+        match (method.as_str(), parts.as_slice()) {
+            ("GET", [""]) => reply(req, "text/html; charset=utf-8", web::live_page().into_bytes()),
+            ("GET", ["api", "version"]) => json(req, serde_json::json!({ "version": ed.version() })),
+            ("GET", ["api", "epics"]) => result(req, ed.epics().map(|v| serde_json::to_value(v).unwrap())),
+            ("GET", ["api", "agenda"]) => {
                 // today comes from the browser (its local day); the server's clock may be in another time zone
                 let today = qp("today").and_then(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok()).unwrap_or_else(|| chrono::Local::now().date_naive());
                 let owner = qp("owner").filter(|o| !o.is_empty());
                 result(req, pm.agenda(owner.as_deref(), today).map(|v| serde_json::to_value(v).unwrap()))
             }
-            (Method::Get, ["api", "loads"]) => result(req, pm.epic_loads().map(|v| serde_json::to_value(v).unwrap())),
-            (Method::Post, ["api", "epics"]) => {
+            ("GET", ["api", "loads"]) => result(req, pm.epic_loads().map(|v| serde_json::to_value(v).unwrap())),
+            ("POST", ["api", "epics"]) => {
                 let r = (|| {
                     let start = b["start"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).ok_or_else(|| vec![Issue::error("start must be YYYY-MM-DD")])?;
                     ed.create_epic(b["key"].as_str().unwrap_or(""), b["name"].as_str().unwrap_or(""), start, &actor).map(|_| serde_json::json!({}))
                 })();
                 result(req, r)
             }
-            (Method::Get, ["api", "epic", k]) => { let k = decode(k); result(req, ed.plan(&k).and_then(|p| Ok(serde_json::json!({ "version": ed.version(), "epic_version": ed.epic_version(&k)?.0, "plan": p })))) }
-            (Method::Get, ["api", "epic", k, "version"]) => result(req, ed.epic_version(&decode(k)).map(|(v, by)| serde_json::json!({ "version": v, "actor": by }))),
-            (Method::Get, ["api", "epic", k, "history"]) => result(req, ed.history(Some(&decode(k)), 100).map(|h| serde_json::to_value(h).unwrap())),
-            (Method::Post, ["api", "epic", k, "ops"]) => {
+            ("GET", ["api", "epic", k]) => { let k = decode(k); result(req, ed.plan(&k).and_then(|p| Ok(serde_json::json!({ "version": ed.version(), "epic_version": ed.epic_version(&k)?.0, "plan": p })))) }
+            ("GET", ["api", "epic", k, "version"]) => result(req, ed.epic_version(&decode(k)).map(|(v, by)| serde_json::json!({ "version": v, "actor": by }))),
+            ("GET", ["api", "epic", k, "history"]) => result(req, ed.history(Some(&decode(k)), 100).map(|h| serde_json::to_value(h).unwrap())),
+            ("POST", ["api", "epic", k, "ops"]) => {
                 let r = crate::edits::parse(b["ops"].clone())
                     .and_then(|ops| ed.apply_at(&decode(k), &actor, &ops, b["base"].as_i64())).map(|_| serde_json::json!({}));
                 result(req, r)
             }
-            (Method::Post, ["api", "epic", k, "save"]) => {
+            ("POST", ["api", "epic", k, "save"]) => {
                 let k = decode(k);
                 let r = (|| {
                     let ch: Vec<Change> = serde_json::from_value(b["changes"].clone()).map_err(|e| vec![Issue::error(e.to_string())])?;
@@ -113,17 +106,17 @@ pub fn run(port: u16, open: bool) {
                 })();
                 result(req, r)
             }
-            (Method::Get, ["api", "history"]) => {
+            ("GET", ["api", "history"]) => {
                 let lim = qp("limit").and_then(|x| x.parse().ok()).unwrap_or(100);
                 result(req, ed.history(qp("epic").as_deref(), lim).map(|h| serde_json::to_value(h).unwrap()))
             }
-            (Method::Post, ["api", "import"]) => {
+            ("POST", ["api", "import"]) => {
                 let r = serde_json::from_value::<plan_contracts::Plan>(b["plan"].clone()).map_err(|e| vec![Issue::error(format!("invalid plan: {e}"))])
                     .and_then(|p| ed.import(&plan_access::JsonPlan(p), None, &actor).map(|k| serde_json::json!({ "epic": k })));
                 result(req, r)
             }
-            (Method::Post, ["api", "epic", k, "delete"]) => result(req, ed.delete_epic(&decode(k), &actor).map(|_| serde_json::json!({}))),
-            (Method::Get, _) => match web::asset(&url) { Some((ct, b)) => reply(req, ct, b), None => reply(req, "text/plain", b"not found".to_vec()) },
+            ("POST", ["api", "epic", k, "delete"]) => result(req, ed.delete_epic(&decode(k), &actor).map(|_| serde_json::json!({}))),
+            ("GET", _) => match web::asset(&url) { Some((ct, b)) => reply(req, ct, b), None => reply(req, "text/plain", b"not found".to_vec()) },
             _ => reply(req, "text/plain", b"method not allowed".to_vec()),
         }
     }
