@@ -174,3 +174,52 @@ test.describe('Status in the Gantt and the network (#49)', () => {
     await expect(page.locator('#nsvg g[data-id="BOOK"] .st-mark.st-doing')).toHaveCount(1);
   });
 });
+
+test.describe('Top bar says what each button does', () => {
+  test('the light/dark button shows a moon in light and a sun in dark', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'light' });
+    await openEpic(page, 'office');
+    const theme = page.locator('#top .theme');
+    await expect(theme.locator('.moon')).toBeVisible();
+    await expect(theme.locator('.sun')).toBeHidden();
+    await expect(theme).toHaveAttribute('aria-label', 'Switch to dark');
+    await theme.click();
+    await expect(theme.locator('.sun')).toBeVisible();
+    await expect(theme.locator('.moon')).toBeHidden();
+    await expect(theme).toHaveAttribute('aria-label', 'Switch to light');
+  });
+
+  test('following a dark system, the button shows a sun', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await openEpic(page, 'office');
+    await expect(page.locator('#top .theme .sun')).toBeVisible();
+    await expect(page.locator('#top .theme')).toHaveAttribute('aria-label', 'Switch to light');
+  });
+
+  test('the warning chip names its count and opens the list', async ({ page }) => {
+    await openEpic(page, 'demo');
+    const warn = page.locator('#warn');
+    await expect(warn).toHaveText(/^⚠ \d+ warnings?$/);
+    await expect(page.locator('#warn-list')).toBeHidden();
+    await warn.click();
+    await expect(page.locator('#warn-list li').first()).toBeVisible();
+    await expect(warn).toHaveAttribute('aria-expanded', 'true');
+    await warn.click();
+    await expect(page.locator('#warn-list')).toBeHidden();
+  });
+
+  test('undo, redo, Discard and Save appear only after a bar is moved', async ({ page }) => {
+    await openEpic(page, 'office');
+    await expect(page.locator('#moves')).toBeHidden();
+    await page.locator('rect.bar[data-id="BOOK"]').click();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#moves')).toBeVisible();
+    await expect(page.locator('#save')).toHaveText('Save 1 move');
+    await page.locator('#reset').click();
+    // Discard can be undone, so the group stays with undo
+    await expect(page.locator('#moves')).toBeVisible();
+    await expect(page.locator('#undo')).toBeEnabled();
+    await page.locator('#undo').click();
+    await expect(page.locator('#save')).toHaveText('Save 1 move');
+  });
+});

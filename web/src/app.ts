@@ -88,6 +88,7 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   };
 
   // ---------- Epic ----------
+  function showWarnings(open: boolean) { $('warn-list').hidden = !open; $('warn').setAttribute('aria-expanded', String(open)) }
   function evaluate() {
     planner = new wasm_bindgen.Planner(JSON.stringify(plan));
     const res: { ok: true; evaluation: Evaluation } | { ok: false; issues: Issue[] } = JSON.parse(planner.evaluate());
@@ -95,7 +96,9 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     $('errors').innerHTML = '';
     ev = res.evaluation; S.ev = ev; S.cal = ev.calendar;
     const warns = ev.issues.filter(i => i.level === 'warning');
-    $('warn').hidden = !warns.length; $('warn').textContent = `⚠ ${warns.length}`; $('warn').title = issueText(warns);
+    $('warn').hidden = !warns.length; $('warn').textContent = `⚠ ${warns.length} warning${warns.length === 1 ? '' : 's'}`; $('warn').title = 'Show the warnings';
+    $('warn-list').innerHTML = warns.map(w => `<li>${esc(issueText([w]))}</li>`).join('');
+    if (!warns.length) showWarnings(false);
     const sc = ev.scenarios.map(s => s.key), rates = ev.rates.map(fmt), pr: Partial<{ s: string; r: string; e: EstKind }> = (st.epic && st.prefs[st.epic]) || {};
     if (!sc.includes(st.s)) st.s = pr.s && sc.includes(pr.s) ? pr.s : sc[0];
     if (!rates.includes(fmt(st.r))) st.r = pr.r && rates.includes(fmt(pr.r)) ? pr.r : rates[0];
@@ -244,6 +247,12 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     const k = key();
     $<HTMLButtonElement>('undo').disabled = !(st.hist[k] || []).length; $<HTMLButtonElement>('redo').disabled = !(st.fut[k] || []).length;
     $<HTMLButtonElement>('reset').disabled = !changed; $<HTMLButtonElement>('save').disabled = !changed;
+    // The moves group appears only while there are moves (or a step to undo or redo)
+    const n = changeList().length, moves = `${n} move${n === 1 ? '' : 's'}`;
+    $('moves').hidden = !(changed || (st.hist[k] || []).length || (st.fut[k] || []).length);
+    $('moves-n').textContent = !n || LIVE ? '' : `${moves} tried`;
+    $('moves-n').hidden = !$('moves-n').textContent;
+    $('save').textContent = `Save ${moves}`;
   }
 
   // ---------- Side panel (edit a task, story or epic) ----------
@@ -467,15 +476,19 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   $('undo').onclick = undo; $('redo').onclick = redo; $('reset').onclick = reset; $('save').onclick = saveChanges;
   // Light/dark toggle (remembered; follows the system until chosen)
   const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  // The icon (moon or sun) is chosen in CSS; the label says which mode a click switches to
+  const themeLabel = () => document.querySelectorAll<HTMLElement>('.theme').forEach(b => { const l = isDark() ? 'Switch to light' : 'Switch to dark'; b.title = l; b.setAttribute('aria-label', l) });
   document.querySelectorAll<HTMLElement>('.theme').forEach(b => b.onclick = () => {
     const t = isDark() ? 'light' : 'dark';
     document.documentElement.dataset.theme = t;
     try { localStorage.setItem('plan-theme', t) } catch { }
-    render();
+    themeLabel(); render();
   });
+  themeLabel();
+  $('warn').onclick = () => showWarnings($('warn-list').hidden);
   $('settings').onclick = () => { st.settings = !st.settings; st.sel = null; st.selStory = null; render() };
   let rz = 0; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(render, 150) });
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { themeLabel(); render() });
 
   // ---------- Routing and picking up changes made elsewhere (CLI, AI) ----------
   function help() {
