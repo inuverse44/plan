@@ -156,6 +156,11 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
   // Edit target: all scenarios (the base tasks) or only this scenario (its overrides)
   const scen = () => (hasScenarios() && st.target === 'one' ? st.s : undefined);
   const setTask = (k: string, patch: TaskPatch) => edit([{ op: 'set_task', key: k, patch, scenario: scen() }]);
+  function setStatus(k: string, to: Status, note: string) {
+    const res: { ok: true; ops: EditOp[] } | { ok: false; issues: Issue[] } = JSON.parse(planner.status_ops(k, to, '', P.iso(new Date()), note));
+    if (!res.ok) { P.toast(issueText(res.issues)); return render() }
+    return edit(res.ops);
+  }
 
   // ---------- What-if moves ----------
   const baseRun = () => ev.runs.find(r => r.key === key())!;
@@ -277,6 +282,9 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
         <label>Needs${inp('needs', (sp.needs || []).join(', '), Object.keys(plan.resources || {}).join(', ') || 'prod')}</label>
         <div class="row2"><label>${sp.wait != null ? 'Wait (days)' : 'Effort (person-days)'}${inp(sp.wait != null ? 'wait' : 'effort', estText(sp.wait ?? sp.effort), '1 or 1, 2, 4')}</label>
           <label>Not before<input type="date" data-f="not_before" value="${sp.not_before || ''}" ${ro ? 'disabled' : ''}></label></div>
+        <div class="row2"><label>Status<select data-f="status" ${ro ? 'disabled' : ''}>${(['todo', 'doing', 'review', 'blocked', 'done'] as Status[]).map(x => `<option value="${x}" ${x === t.status ? 'selected' : ''}>${P.STATUS_NAME[x]}</option>`).join('')}</select></label>
+          ${t.hold ? `<label>Waiting for${inp('hold_note', t.hold.note, 'who or what')}</label>` : '<span></span>'}</div>
+        ${t.hold ? `<div class="sub">${P.STATUS_NAME[t.status]} since ${mdw(t.hold.since)}</div>` : ''}
         <div class="checks"><label><input type="checkbox" data-f="waitkind" ${sp.wait != null ? 'checked' : ''} ${ro ? 'disabled' : ''}>Wait</label>
           <label><input type="checkbox" data-f="done" ${sp.done ? 'checked' : ''} ${ro ? 'disabled' : ''}>Done</label></div>
         <div class="row2"><label>Actual start<input type="date" data-f="actual_start" value="${sp.actual_start || ''}" ${ro ? 'disabled' : ''}></label>
@@ -299,6 +307,8 @@ type Draft = { kind: 'task'; story: string } | { kind: 'story' };
     $('del-task').onclick = async () => { if (await edit([{ op: 'delete_task', key: t.id }])) { st.sel = null; P.toast(`Deleted ${t.id}`) } };
     el.querySelectorAll<HTMLInputElement>('[data-f]').forEach(inpEl => inpEl.onchange = () => {
       const f = inpEl.dataset.f!, v = inpEl.type === 'checkbox' ? inpEl.checked : inpEl.value.trim();
+      // Status and its note go through the status rules (they also write the dates); always on the base task
+      if (f === 'status' || f === 'hold_note') return setStatus(t.id, f === 'status' ? String(v) as Status : t.status, f === 'hold_note' ? String(v) : (t.hold?.note ?? ''));
       if (f === 'waitkind') { const cur = estParse(estText(sp.wait ?? sp.effort)) ?? 1; return setTask(t.id, v ? { wait: cur, clear: ['effort'] } : { effort: cur, clear: ['wait'] }) }
       // Done without a finish date: finished today (the viewer's local day)
       if (f === 'done' && v === true && !sp.actual_finish) return setTask(t.id, { done: true, actual_finish: P.iso(new Date()) });

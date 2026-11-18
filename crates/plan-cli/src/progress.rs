@@ -1,11 +1,9 @@
-//! Recording progress in one step ("started X", "finished X") for the CLI and MCP: find the task, write the actual date, report the effect.
+//! Recording progress in one step ("started X", "X is in review", "finished X") for the CLI and MCP: find the task, move it to the status
+//! (the dates and the hold it writes come from the status rules), report the effect.
 //! The task is found by id or ticket (exact, any case), otherwise by a part of its name; several matches are returned instead of guessing
-use plan_contracts::{EditOp, Issue, TaskPatch};
+use plan_contracts::{Issue, Status};
 use plan_manager::PlanEditingManager;
 use serde_json::{json, Value};
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum Step { Start, Finish }
 
 /// Base tasks matching the query: exact id or ticket first, else names containing it. Only not-done tasks unless exact
 fn find(ed: &PlanEditingManager, epic: Option<&str>, query: &str) -> Result<Vec<(String, plan_contracts::TaskSpec)>, Vec<Issue>> {
@@ -19,8 +17,9 @@ fn find(ed: &PlanEditingManager, epic: Option<&str>, query: &str) -> Result<Vec<
     Ok(all.into_iter().filter(|(_, t)| !t.done && (t.name.to_lowercase().contains(&q) || t.short.to_lowercase().contains(&q))).collect())
 }
 
-/// Record a start or a finish. `date` defaults to today; `person` picks whose next task to report
-pub fn record(step: Step, query: &str, epic: Option<&str>, date: Option<chrono::NaiveDate>, person: Option<&str>, actor: &str) -> Result<Value, Vec<Issue>> {
+/// Move a task to a status (start = doing, finish = done). `date` defaults to today; `note` says who or what a review or a block waits for;
+/// `person` picks whose next task to report
+pub fn record(to: Status, query: &str, epic: Option<&str>, date: Option<chrono::NaiveDate>, note: &str, person: Option<&str>, actor: &str) -> Result<Value, Vec<Issue>> {
     let ed = PlanEditingManager::new(crate::store());
     let found = find(&ed, epic, query)?;
     let (k, t) = match found.as_slice() {
@@ -29,18 +28,14 @@ pub fn record(step: Step, query: &str, epic: Option<&str>, date: Option<chrono::
         many => return Ok(json!({ "changed": false, "candidates": many.iter().map(|(k, t)| json!({ "epic": k, "id": t.id, "name": t.name, "ticket": t.ticket })).collect::<Vec<_>>(),
             "note": "several tasks match; call again with the task id (and epic)" })),
     };
-    let day = date.unwrap_or_else(|| chrono::Local::now().date_naive());
-    let patch = match step {
-        Step::Start => TaskPatch { actual_start: Some(day), ..Default::default() },
-        // a finish without a recorded start: the start stays unknown
-        Step::Finish => TaskPatch { done: Some(true), actual_finish: Some(day), ..Default::default() },
-    };
-    let mut d = crate::apply_data(&k, actor, &[EditOp::SetTask { key: t.id.clone(), patch, scenario: None }])?;
+    let ops = ed.status_ops(&k, &t.id, to, date, chrono::Local::now().date_naive(), note)?;
+    let mut d = crate::apply_data(&k, actor, &ops)?;
+    let after = ed.plan(&k)?.tasks.into_iter().find(|x| x.id == t.id).unwrap_or(t.clone());
     let who = person.map(str::to_string).or_else(|| t.owners.as_ref().and_then(|o| (o.len() == 1).then(|| o[0].clone())));
     let next = crate::agenda_data(who.as_deref()).map(|a| json!({ "owner": who, "next": a["next"], "then": a["then"] })).unwrap_or(Value::Null);
     let o = d.as_object_mut().unwrap();
     o.insert("changed".into(), json!(true));
-    o.insert("task".into(), json!({ "epic": k, "id": t.id, "name": t.name, if step == Step::Start { "actual_start" } else { "actual_finish" }: day }));
+    o.insert("task".into(), json!({ "epic": k, "id": t.id, "name": t.name, "status": to, "actual_start": after.actual_start, "actual_finish": after.actual_finish, "hold": after.hold }));
     o.insert("next".into(), next);
     Ok(d)
 }

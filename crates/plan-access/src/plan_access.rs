@@ -163,8 +163,9 @@ fn plan_patch(t: &mut TaskSpec, p: &TaskPatch) {
     if p.fixed.is_some() { t.fixed = p.fixed; }
     if p.actual_start.is_some() { t.actual_start = p.actual_start; }
     if p.actual_finish.is_some() { t.actual_finish = p.actual_finish; }
+    if p.hold.is_some() { t.hold = p.hold.clone(); }
     for c in &p.clear {
-        match c.as_str() { "actual_start" => t.actual_start = None, "actual_finish" => t.actual_finish = None, "not_before" => t.not_before = None, "fixed" => t.fixed = None, "effort" => t.effort = None, "wait" => t.wait = None, "owners" | "owner" => t.owners = None, _ => {} }
+        match c.as_str() { "hold" => t.hold = None, "actual_start" => t.actual_start = None, "actual_finish" => t.actual_finish = None, "not_before" => t.not_before = None, "fixed" => t.fixed = None, "effort" => t.effort = None, "wait" => t.wait = None, "owners" | "owner" => t.owners = None, _ => {} }
     }
 }
 
@@ -172,13 +173,13 @@ fn plan_patch(t: &mut TaskSpec, p: &TaskPatch) {
 /// of that field, and a later clear drops an earlier value
 fn merge_patch(a: &mut TaskPatch, b: &TaskPatch) {
     macro_rules! m { ($($f:ident),*) => { $( if b.$f.is_some() { a.$f = b.$f.clone(); a.clear.retain(|c| c != stringify!($f)); } )* } }
-    m!(story, name, short, ticket, deliverable, group, note, effort, wait, owners, after, needs, not_before, fixed, done, actual_start, actual_finish);
+    m!(story, name, short, ticket, deliverable, group, note, effort, wait, owners, after, needs, not_before, fixed, done, actual_start, actual_finish, hold);
     if b.owners.is_some() { a.clear.retain(|c| c != "owner"); }
     if b.effort.is_some() { a.wait = None; }
     if b.wait.is_some() { a.effort = None; }
     for c in &b.clear {
         match c.as_str() {
-            "actual_start" => a.actual_start = None, "actual_finish" => a.actual_finish = None, "not_before" => a.not_before = None,
+            "hold" => a.hold = None, "actual_start" => a.actual_start = None, "actual_finish" => a.actual_finish = None, "not_before" => a.not_before = None,
             "fixed" => a.fixed = None, "effort" => a.effort = None, "wait" => a.wait = None, "owners" | "owner" => a.owners = None, _ => {}
         }
         if !a.clear.contains(c) { a.clear.push(c.clone()); }
@@ -218,6 +219,13 @@ fn task_lines(t: &TaskSpec, out: &mut String) {
     if t.done { out.push_str("done = true\n"); }
     if let Some(d) = t.actual_start { out.push_str(&format!("actual_start = \"{d}\"\n")); }
     if let Some(d) = t.actual_finish { out.push_str(&format!("actual_finish = \"{d}\"\n")); }
+    if let Some(h) = &t.hold { out.push_str(&hold_line(h)); }
+}
+
+fn hold_line(h: &Hold) -> String {
+    let kind = match h.kind { HoldKind::Review => "review", HoldKind::Blocked => "blocked" };
+    let note = if h.note.is_empty() { String::new() } else { format!(", note = {}", q(&h.note)) };
+    format!("hold = {{ kind = \"{kind}\", since = \"{}\"{note} }}\n", h.since)
 }
 
 fn patch_lines(p: &TaskPatch, out: &mut String) {
@@ -232,6 +240,9 @@ fn patch_lines(p: &TaskPatch, out: &mut String) {
     if let Some(d) = p.not_before { out.push_str(&format!("not_before = \"{d}\"\n")); }
     if let Some(d) = p.fixed { out.push_str(&format!("fixed = \"{d}\"\n")); }
     if let Some(v) = p.done { out.push_str(&format!("done = {v}\n")); }
+    if let Some(d) = p.actual_start { out.push_str(&format!("actual_start = \"{d}\"\n")); }
+    if let Some(d) = p.actual_finish { out.push_str(&format!("actual_finish = \"{d}\"\n")); }
+    if let Some(h) = &p.hold { out.push_str(&hold_line(h)); }
     if !p.clear.is_empty() { out.push_str(&format!("clear = {}\n", qlist(&p.clear))); }
 }
 
@@ -320,7 +331,7 @@ fn list_of(v: &Value) -> Vec<String> {
     }
 }
 
-const TASK_KEYS: [&str; 19] = ["actual_start", "actual_finish", "story", "id", "name", "short", "ticket", "deliverable", "effort", "wait", "owner", "after", "needs", "prod", "not_before", "fixed", "done", "group", "note"];
+const TASK_KEYS: [&str; 20] = ["hold", "actual_start", "actual_finish", "story", "id", "name", "short", "ticket", "deliverable", "effort", "wait", "owner", "after", "needs", "prod", "not_before", "fixed", "done", "group", "note"];
 
 fn task(t: &Table, where_: &str) -> Result<TaskSpec, Issue> {
     let id = str_of(t, "id");
@@ -345,6 +356,7 @@ fn task(t: &Table, where_: &str) -> Result<TaskSpec, Issue> {
         done: t.get("done").and_then(|v| v.as_bool()).unwrap_or(false),
         actual_start: opt_date(t, "actual_start", &w)?,
         actual_finish: opt_date(t, "actual_finish", &w)?,
+        hold: hold(t, &w)?,
         unknown_keys: t.keys().filter(|k| !TASK_KEYS.contains(&k.as_str())).cloned().collect(),
         id,
     })
@@ -366,7 +378,22 @@ fn patch(t: &Table, w: &str) -> Result<TaskPatch, Issue> {
         done: t.get("done").and_then(|v| v.as_bool()),
         actual_start: opt_date(t, "actual_start", w)?,
         actual_finish: opt_date(t, "actual_finish", w)?,
+        hold: hold(t, w)?,
     })
+}
+
+/// hold = { kind = "review" | "blocked", since = DATE, note = "…" }
+fn hold(t: &Table, w: &str) -> Result<Option<Hold>, Issue> {
+    let Some(v) = t.get("hold") else { return Ok(None) };
+    let w = format!("{w}.hold");
+    let h = v.as_table().ok_or_else(|| Issue::error(format!("{w}: must be {{ kind = \"review\" | \"blocked\", since = \"YYYY-MM-DD\", note = \"…\" }}")))?;
+    let kind = match h.get("kind").and_then(|v| v.as_str()) {
+        Some("review") => HoldKind::Review,
+        Some("blocked") => HoldKind::Blocked,
+        other => return Err(Issue::error(format!("{w}.kind: review or blocked, not {other:?}"))),
+    };
+    let since = opt_date(h, "since", &w)?.ok_or_else(|| Issue::error(format!("{w}.since: a date is required")))?;
+    Ok(Some(Hold { kind, since, note: h.get("note").and_then(|v| v.as_str()).unwrap_or_default().to_string() }))
 }
 
 const TOP_KEYS: [&str; 22] = ["max_task_days", "resources", "key", "stories", "title", "description", "start", "start_half", "deadline", "deadline_task", "deadline_label", "rates", "estimates",

@@ -5,7 +5,7 @@
 //! return the same data as `--json`. Edits are recorded with the actor `mcp`.
 //!
 //!   claude mcp add plan -- /path/to/plan mcp
-use plan_contracts::Issue;
+use plan_contracts::{Issue, Status};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
@@ -21,11 +21,12 @@ Edits:
   {"op":"clone_scenario","from":"plan1","key":"plan2","name":"Plan 2"}   {"op":"set_scenario","key":"plan2","name":"…"}   {"op":"delete_scenario","key":"plan2"}
   {"op":"set_epic","settings":{"deadline":"2026-12-22","deadline_task":"CUT","owners":["alice","bob"],"max_task_days":2}}
   {"op":"add_comment","target":"T1","text":"Ticket: https://example.com/issues/42"}   {"op":"delete_comment","id":3}
-Task fields: id name short story ticket deliverable note owners after needs done not_before fixed actual_start actual_finish (dates YYYY-MM-DD), and effort (person-days) or wait (business days): a number or [optimistic, most likely, pessimistic].
+Task fields: id name short story ticket deliverable note owners after needs done not_before fixed actual_start actual_finish hold (dates YYYY-MM-DD), and effort (person-days) or wait (business days): a number or [optimistic, most likely, pessimistic].
 needs: resources the task needs besides people (keys of the plan's resources, e.g. ["prod"]); the task is not placed in their off periods (see dump: resources).
 max_task_days: tasks with a larger expected effort get a warning in check (default 2, 0 = off, null = default).
 done: true without actual_finish records today as the actual finish.
-set_task: "scenario" changes only that scenario (null = the base, every scenario). "patch":{"clear":["not_before","effort","wait","owners","fixed"]} removes fields."#;
+hold: {"kind":"review"|"blocked","since":"YYYY-MM-DD","note":"who or what it waits for"}; prefer the status tool, which also writes the dates.
+set_task: "scenario" changes only that scenario (null = the base, every scenario). "patch":{"clear":["not_before","effort","wait","owners","fixed","hold"]} removes fields."#;
 
 fn epic_prop() -> Value { json!({ "type": "string", "description": "the epic key (from epics), or a path to a .toml plan file" }) }
 fn run_props() -> Value {
@@ -65,12 +66,17 @@ pub fn tools() -> Value {
           "inputSchema": schema(json!({ "epic": { "type": "string", "description": "only this epic (default: all)" }, "limit": { "type": "integer", "description": "default 50" } }), &[]), "annotations": ro },
         { "name": "load", "description": "People across epics: each epic's default run (first scenario, first utilization, e) added up per person and day (1 = one person's whole day). Lists the days over 100% with the share of each epic. Epics are still scheduled on their own; this only adds the loads up.",
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "only this person (default: everyone)" } }), &[]), "annotations": ro },
-        { "name": "next", "description": "The single task a person should do now, across all epics: ready (predecessors done), not done, least float, then earliest start, then earliest deadline. Also the one after it. Each epic's default run.",
+        { "name": "next", "description": "The single task a person should do now, across all epics: ready (predecessors done), not done, not in review or blocked, least float, then earliest start, then earliest deadline. Also the one after it. Each epic's default run.",
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "owner name (default: everyone)" } }), &[]), "annotations": ro },
-        { "name": "today", "description": "A daily briefing for a person across all epics: the next task, tasks planned to start by today but not started, tasks due by Sunday, and risks (late starts, epics planned past their deadline, epics that cannot be evaluated). Dates are the local today.",
+        { "name": "today", "description": "A daily briefing for a person across all epics: the next task, tasks planned to start by today but not started, tasks due by Sunday, tasks in review or blocked, and risks (late starts, blocked tasks, reviews open 3+ days, epics planned past their deadline, epics that cannot be evaluated). Dates are the local today.",
           "inputSchema": schema(json!({ "person": { "type": "string", "description": "owner name (default: everyone)" } }), &[]), "annotations": ro },
         { "name": "start", "description": "Record that a task started (\"I started X\"): sets its actual start (default today). The task is found across epics by id or ticket, otherwise by part of its name; if several match, the candidates come back and nothing changes. Returns the effect on the schedule and the person's next task.",
           "inputSchema": schema(progress_props(), &["task"]), "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true } },
+        { "name": "status", "description": "Move a task to a status: todo, doing, review (waiting for a review), blocked (stopped by something not in the plan) or done. Writes what goes with it: doing and review set the actual start if missing, review and blocked record since when and the note, done marks it done with its actual finish, todo clears all of these. Found like start. Stories and epics have no status of their own; show gives theirs, rolled up from their tasks.",
+          "inputSchema": schema(with(progress_props(), json!({
+              "status": { "type": "string", "enum": ["todo", "doing", "review", "blocked", "done"] },
+              "note": { "type": "string", "description": "for review or blocked: who or what it waits for" } })), &["task", "status"]),
+          "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true } },
         { "name": "finish", "description": "Record that a task is done (\"I finished X\"): marks it done with its actual finish (default today). Found like start. Returns the effect on the schedule (new end, slack) and the person's next task.",
           "inputSchema": schema(progress_props(), &["task"]), "annotations": { "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true } },
         { "name": "delete_epic", "description": "Delete a whole epic (its stories, tasks and scenarios). Its content stays in the change history (log). Ask the person before using it.",
@@ -100,10 +106,14 @@ pub fn call(name: &str, args: &Value) -> Result<Value, Vec<Issue>> {
         "load" => crate::load_data(s("person")),
         "next" => crate::agenda_data(s("person")).map(|d| json!({ "next": d["next"], "then": d["then"] })),
         "today" => crate::agenda_data(s("person")),
-        "start" | "finish" => {
+        "start" | "finish" | "status" => {
             let date = s("date").map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| vec![Issue::error(format!("date must be YYYY-MM-DD: {d}"))])).transpose()?;
-            let step = if name == "start" { crate::progress::Step::Start } else { crate::progress::Step::Finish };
-            crate::progress::record(step, need("task")?, s("epic"), date, s("person"), "mcp")
+            let to = match name {
+                "start" => Status::Doing,
+                "finish" => Status::Done,
+                _ => { let v = need("status")?; Status::parse(v).ok_or_else(|| vec![Issue::error(format!("status is todo, doing, review, blocked or done, not {v:?}"))])? }
+            };
+            crate::progress::record(to, need("task")?, s("epic"), date, s("note").unwrap_or_default(), s("person"), "mcp")
         }
         "log" => crate::log_data(s("epic"), args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize),
         "apply" => {

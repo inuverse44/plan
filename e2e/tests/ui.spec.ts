@@ -128,3 +128,26 @@ test.describe('Home (#38)', () => {
     await expect(page.locator('#gsvg')).toBeVisible();
   });
 });
+
+test.describe('Status (#48)', () => {
+  test('choosing Blocked in the side panel marks the task and its story; the CLI sees the hold; Done clears it', async ({ page }) => {
+    await openEpic(page, 'status');
+    await page.locator('g[data-id="PACK"] text').first().click();
+    const status = page.locator('#side select[data-f="status"]');
+    await expect(status).toHaveValue('todo');
+    await status.selectOption('blocked');
+    await expect(page.locator('g[data-id="PACK"] .hold-mark')).toHaveText('Blocked');
+    await expect(page.locator('.story-row[data-story="S1"] .story-status')).toHaveText('Blocked');
+
+    // the note: who or what it waits for
+    const note = page.locator('#side input[data-f="hold_note"]');
+    await note.fill('the landlord');
+    await note.press('Enter');
+    await expect.poll(() => cli('dump', 'status')).toMatch(/id = "PACK"[\s\S]*?hold = \{ kind = "blocked", since = "2026-11-18", note = "the landlord" \}/);
+    expect(cli('today')).toContain('PACK blocked since 2026-11-18');
+
+    await page.locator('#side select[data-f="status"]').selectOption('done');
+    await expect(page.locator('g[data-id="PACK"] .hold-mark')).toHaveCount(0);
+    await expect.poll(() => cli('dump', 'status')).toMatch(/id = "PACK"[\s\S]*?done = true\nactual_finish = "2026-11-18"\n(?!hold)/);
+  });
+});

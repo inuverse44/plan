@@ -20,6 +20,12 @@ label?: string,
  */
 off: Array<[string, string]>, };
 
+declare type HoldKind = "review" | "blocked";
+
+declare type Hold = { kind: HoldKind, since: string, note?: string, };
+
+declare type Status = "todo" | "doing" | "review" | "blocked" | "done";
+
 declare type TaskSpec = { id: string, 
 /**
  * Key of the story this task belongs to (empty: no story)
@@ -36,11 +42,15 @@ needs?: Array<string>, not_before?: string | null, fixed?: string | null, done?:
 /**
  * Actual dates (e.g. from an issue tracker). Not used for scheduling; drawn as past bars in the Gantt chart
  */
-actual_start?: string | null, actual_finish?: string | null, unknown_keys?: Array<string>, };
-
-declare type TaskPatch = { story?: string | null, name?: string | null, short?: string | null, ticket?: string | null, deliverable?: string | null, group?: string | null, note?: string | null, effort?: Estimate | null, wait?: Estimate | null, owners?: Array<string> | null, after?: Array<string> | null, needs?: Array<string> | null, not_before?: string | null, fixed?: string | null, done?: boolean | null, actual_start?: string | null, actual_finish?: string | null, 
+actual_start?: string | null, actual_finish?: string | null, 
 /**
- * Names of fields to clear (not_before, fixed, effort, wait, owners)
+ * In review or blocked (see Status)
+ */
+hold?: Hold | null, unknown_keys?: Array<string>, };
+
+declare type TaskPatch = { story?: string | null, name?: string | null, short?: string | null, ticket?: string | null, deliverable?: string | null, group?: string | null, note?: string | null, effort?: Estimate | null, wait?: Estimate | null, owners?: Array<string> | null, after?: Array<string> | null, needs?: Array<string> | null, not_before?: string | null, fixed?: string | null, done?: boolean | null, actual_start?: string | null, actual_finish?: string | null, hold?: Hold | null, 
+/**
+ * Names of fields to clear (not_before, fixed, effort, wait, owners, actual_start, actual_finish, hold)
  */
 clear?: Array<string>, };
 
@@ -130,13 +140,21 @@ declare type Assessment = { colors: Array<FloatColor>, risk: Risk | null, effort
  */
 load: { [key in string]: { [key in string]: number } }, target_slot: number, slack_to_deadline: number | null, critical_path: Array<string>, };
 
-declare type TaskView = { id: string, story: string, name: string, short: string, ticket: string, deliverable: string, group: string, note: string, kind: Kind, owners: Array<string>, after: Array<string>, reduced_after: Array<string>, needs: Array<string>, dur: number, val: number, base_dur: number, release: number, es: number, ef: number, tf: number | null, ff: number | null, color: FloatColor, why: string, done: boolean, actual_start: string | null, actual_finish: string | null, };
+declare type TaskView = { id: string, story: string, name: string, short: string, ticket: string, deliverable: string, group: string, note: string, kind: Kind, owners: Array<string>, after: Array<string>, reduced_after: Array<string>, needs: Array<string>, dur: number, val: number, base_dur: number, release: number, es: number, ef: number, tf: number | null, ff: number | null, color: FloatColor, why: string, done: boolean, actual_start: string | null, actual_finish: string | null, hold: Hold | null, status: Status, };
 
 declare type RunResult = { key: string, scenario: string, rate: number, est: EstKind, 
 /**
  * In scheduling order
  */
-tasks: Array<TaskView>, end: number, target: number, slack_to_deadline: number | null, risk: Risk | null, effort: { [key in string]: number }, effort_total: number, efficiency: number | null, load: { [key in string]: { [key in string]: number } }, critical_path: Array<string>, };
+tasks: Array<TaskView>, end: number, target: number, slack_to_deadline: number | null, risk: Risk | null, effort: { [key in string]: number }, effort_total: number, efficiency: number | null, load: { [key in string]: { [key in string]: number } }, critical_path: Array<string>, 
+/**
+ * The epic's status, rolled up from its tasks
+ */
+status: Status, 
+/**
+ * Story key → status, rolled up from its tasks (stories without tasks are todo)
+ */
+story_status: { [key in string]: Status }, };
 
 declare type EpicLoad = { epic: string, name: string, scenario: string, rate: number, est: EstKind, 
 /**
@@ -188,7 +206,7 @@ ready: boolean,
 /**
  * It has an actual start
  */
-started: boolean, deadline: string | null, };
+started: boolean, status: Status, hold: Hold | null, deadline: string | null, };
 
 declare type AgendaRisk = { epic: string, task: string | null, message: string, };
 
@@ -222,5 +240,9 @@ start_today: Array<AgendaTask>,
 /**
  * Planned to finish by the end of this week (Sunday), not done
  */
-due_this_week: Array<AgendaTask>, risks: Array<AgendaRisk>, epics: Array<EpicStatus>, };
+due_this_week: Array<AgendaTask>, 
+/**
+ * In review or blocked, oldest first
+ */
+on_hold: Array<AgendaTask>, risks: Array<AgendaRisk>, epics: Array<EpicStatus>, };
 

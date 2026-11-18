@@ -67,6 +67,8 @@ function ownerCell(owners: string[], x: number, y: number) {
 }
 
 // Stories / Tasks switch (top left of the Gantt)
+// A story's rolled-up status, right-aligned in the label area (to do shows nothing)
+const storyMark = (s: Status, x: number, y: number) => `<text class="story-status" x="${x}" y="${y}" text-anchor="end" font-size="11" fill="${P.css(s === 'blocked' ? '--red' : s === 'done' ? '--done' : '--muted')}">${P.STATUS_NAME[s]}</text>`;
 const ganttLevel = (ctx: ViewCtx) => `<div class="seg small" style="margin-bottom:8px" role="group" aria-label="Gantt level">${[['story', 'Stories'], ['task', 'Tasks']].map(([v, l]) => `<button data-level="${v}" aria-pressed="${ctx.level === v}">${l}</button>`).join('')}</div>`;
 const wireLevel = (el: HTMLElement, ctx: ViewCtx) => el.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.onclick = () => ctx.setLevel(b.dataset.level as 'story' | 'task'));
 
@@ -117,10 +119,12 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
     if (sp) {
       const x1 = sp.x1, w = Math.max(6, sp.x2 - x1), crit = sp.color === 'crit';
       if (b0 && (b0.x1 !== sp.x1 || b0.x2 !== sp.x2)) bars += `<rect x="${b0.x1}" y="${y + 7}" width="${Math.max(3, b0.x2 - b0.x1)}" height="${rh - 14}" rx="4" fill="none" stroke="${css('--muted')}" stroke-dasharray="3 3"/>`;
-      const tip = `${g.name}\n${sp.n} tasks (${sp.done} done) · min float ${sp.minf ?? '—'}d`;
+      const stat = g.key ? run.story_status[g.key] : undefined;
+      const tip = `${g.name}${stat ? ' · ' + P.STATUS_NAME[stat] : ''}\n${sp.n} tasks (${sp.done} done) · min float ${sp.minf ?? '—'}d`;
       bars += `<rect x="${x1}" y="${y + 6}" width="${w}" height="${rh - 12}" rx="4" fill="${sp.color === 'wait' ? 'url(#hatch)' : css(P.COLOR[sp.color])}" style="cursor:pointer"><title>${esc(tip)}</title></rect>`;
       if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
       bars += `<text x="${x1 + w + 8}" y="${y + 21}" font-size="11.5" style="fill:${css('--muted')}">${sp.n}</text>`;
+      if (stat && stat !== 'todo') bars += `<text class="story-status" x="${x1 + w + 30}" y="${y + 21}" font-size="11.5" font-weight="${stat === 'blocked' ? 600 : 400}" style="fill:${css(stat === 'blocked' ? '--red' : '--muted')}">${P.STATUS_NAME[stat]}</text>`;
     }
     bars += `</g>`;
   });
@@ -174,7 +178,8 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
     const mem = run.tasks.filter(t => (sk ? t.story === sk : !(t.story in sIdx)) && (t.kind !== 'done' || t.actual_start));
     const sel = ctx.selStory && ctx.selStory === sk;
     bars += `<g class="story-row" data-story="${esc(sk)}"><rect x="0" y="${y}" width="${W}" height="${rh}" fill="${css('--surface-2')}" opacity="${sel ? .9 : .45}"/>` + todayHit(y, rh);
-    bars += P.ICON('story', 6, y + 8) + `<text x="28" y="${y + 21}" font-size="13" font-weight="600">${esc(sname.slice(0, 15))}<title>${esc(sname)}</title></text>`;
+    bars += P.ICON('story', 6, y + 8) + `<text x="28" y="${y + 21}" font-size="13" font-weight="600">${esc(sname.slice(0, 15))}<title>${esc(sname)}: ${P.STATUS_NAME[run.story_status[sk] ?? 'todo']}</title></text>`;
+    if (ow >= 0 && sk && run.story_status[sk] && run.story_status[sk] !== 'todo') bars += storyMark(run.story_status[sk]!, lw - 12, y + 21);
     if (mem.length) {
       const x1 = Math.min(...mem.map(t => bx(t)[0])), x2 = Math.max(...mem.map(t => bx(t)[1]));
       bars += `<path d="M${x1} ${y + 22}V${y + 12}H${x2}V${y + 22}" fill="none" stroke="${css('--muted')}" stroke-width="2"/>`;
@@ -184,7 +189,8 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
   for (const k of taskRows) {
     const t = K[k], b = B[k], y = ry(k), dim = rel && !rel.has(k);
     const crit = t.tf === 0 && t.kind !== 'done';
-    const tip = `${t.name}\n${mdw(S.start(t.es))} ${S.half(t.es)} – ${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : ''}\nFloat ${t.tf == null ? '—' : t.tf / 2}d · ${t.why}${ow < 0 && t.owners.length ? '\nOwner: ' + t.owners.join(', ') : ''}`;
+    const hold = t.hold ? ` since ${t.hold.since}${t.hold.note ? ': ' + t.hold.note : ''}` : '';
+    const tip = `${t.name}\n${P.STATUS_NAME[t.status]}${hold}\n${mdw(S.start(t.es))} ${S.half(t.es)} – ${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : ''}\nFloat ${t.tf == null ? '—' : t.tf / 2}d · ${t.why}${ow < 0 && t.owners.length ? '\nOwner: ' + t.owners.join(', ') : ''}`;
     bars += `<g data-id="${k}" opacity="${dim ? .25 : 1}">`;
     const ind = t.story && sIdx[t.story] != null ? 14 : 0;
     bars += P.ICON('task', 6 + ind, y + 9, 14) + `<text x="${26 + ind}" y="${y + 21}" font-size="13" font-weight="${crit ? 600 : 400}" style="cursor:pointer">${esc((t.short || t.name).slice(0, 14))}<title>${esc(tip)}</title></text>`;
@@ -199,6 +205,7 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
       bars += `<rect class="${t.kind === 'done' ? '' : 'bar'}" data-id="${k}" x="${x1}" y="${y + 6}" width="${w}" height="${rh - 12}" rx="4" fill="${fill}"
         stroke="${crit ? css('--f-crit') : (ctx.sel === k ? css('--focus') : 'none')}" stroke-width="${crit ? 2 : 2}" ${crit && !wait ? `stroke-opacity=".0"` : ''}><title>${esc(tip)}</title></rect>`;
       if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
+      if (t.hold) bars += `<text class="hold-mark" x="${x1 + w + (ctx.editable && (ctx.focus === k || ctx.sel === k) ? 24 : 6)}" y="${y + 21}" font-size="11" font-weight="600" fill="${css(t.hold.kind === 'blocked' ? '--red' : '--yellow')}">${t.hold.kind === 'blocked' ? 'Blocked' : 'In review'}</text>`;
       if (t.kind !== 'done') bars += `<rect class="rz" data-id="${k}" x="${x1 + w - 6}" y="${y + 6}" width="12" height="${rh - 12}" fill="transparent"/>`;
       // Link handle: drag from here onto another task
       if (ctx.editable && (ctx.focus === k || ctx.sel === k)) bars += `<circle class="link" data-id="${k}" cx="${x1 + w + 12}" cy="${y + rh / 2}" r="6" fill="${css('--surface')}" stroke="${css('--accent')}" stroke-width="2" style="cursor:crosshair"><title>Drag onto the task that should follow</title></circle>`;

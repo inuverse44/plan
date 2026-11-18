@@ -3,14 +3,15 @@
 //!   read    plan epics | dump E | check E | calc E | show E [-s scenario -r 0.6 -e e] | why E TASK | json E | log [E]
 //!           plan load [PERSON]  people across epics: each epic's default run added up per day, days over 100%
 //!           plan next [PERSON]  the single task to do now | today [PERSON]  next, starting today, due this week, risks
-//!   progress plan start TASK [DATE] | finish TASK [DATE]  TASK is an id, a ticket or part of a name, across epics; DATE defaults to today
+//!   progress plan start TASK [DATE] | finish TASK [DATE] | status TASK todo|doing|review|blocked|done [NOTE] [--date D]
+//!           TASK is an id, a ticket or part of a name, across epics; DATE defaults to today; NOTE: who or what a review or a block waits for
 //!   create  plan epic add KEY NAME START | epic rm KEY | import F.toml [--key K] | new F.toml (a TOML template)
 //!   edit    plan task add E KEY k=v … | task set E KEY k=v … [-s scenario] | task rm E KEY
 //!           plan dep add E TASK PRED | dep rm E TASK PRED | story set E KEY name=… | scenario clone E FROM|- KEY NAME | scenario rm E KEY
 //!   batch   plan apply E ops.json ("-" for stdin)  apply a list of edits at once; any error writes nothing
 //!   machine every command accepts --json and returns {"ok":true,"data":…} or {"ok":false,"issues":[…]}
 //!   ui      plan serve [--port N] [--no-open] | export E [out.html]
-//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load next today start finish apply delete_epic) for AI assistants
+//!   mcp     plan mcp  an MCP server on stdin/stdout (tools: epics dump show calc why check log load next today start status finish apply delete_epic) for AI assistants
 //!   k=v     name short story ticket deliverable note owner=a,b after=a,b needs=prod,db effort=1 or 1,2,4 wait=2 not_before=2026-12-01 (empty clears) fixed done actual_start actual_finish
 //!   E may be a path to a .toml file: the file is read directly, without the DB
 //!   store   with server=URL in ~/.config/plan/config the CLI goes through the server's API, otherwise the local SQLite. PLAN_DB forces local
@@ -197,7 +198,8 @@ pub fn agenda_data(person: Option<&str>) -> Result<serde_json::Value, Vec<Issue>
 
 fn agenda_line(t: &AgendaTask) -> String {
     let fl = if t.float_days == 0.0 { "critical".to_string() } else { format!("float {}d", fmt_num(t.float_days)) };
-    format!("{} {} ({}{}) · {} → {} · {fl}{}", t.id, t.name, t.epic, if t.ticket.is_empty() { String::new() } else { format!(", {}", t.ticket) }, t.start, t.finish, if t.started { " · started" } else { "" })
+    let st = match &t.hold { Some(h) => format!(" · {} since {}{}", t.status.code(), h.since, if h.note.is_empty() { String::new() } else { format!(": {}", h.note) }), None if t.started => " · started".into(), None => String::new() };
+    format!("{} {} ({}{}) · {} → {} · {fl}{st}", t.id, t.name, t.epic, if t.ticket.is_empty() { String::new() } else { format!(", {}", t.ticket) }, t.start, t.finish)
 }
 
 /// plan next [PERSON]: the single task to do now. plan today [PERSON]: next, starting, due this week, risks
@@ -212,6 +214,7 @@ fn agenda(cmd: &str, person: Option<&str>) {
     let list = |title: &str, v: &[AgendaTask]| { if !v.is_empty() { println!("\n{title}"); for t in v { println!("- {}", agenda_line(t)); } } };
     list(&format!("planned to start by {} and not started", a.today), &a.start_today);
     list("due this week", &a.due_this_week);
+    list("in review or blocked", &a.on_hold);
     if !a.risks.is_empty() { println!("\nrisks"); for r in &a.risks { println!("- [{}] {}", r.epic, r.message); } }
 }
 
@@ -352,6 +355,7 @@ fn patch(kvs: &[String]) -> Result<TaskPatch, String> {
             "fixed" => if v.is_empty() { p.clear.push("fixed".into()) } else { p.fixed = Some(date(v)?) },
             "actual_start" => if v.is_empty() { p.clear.push("actual_start".into()) } else { p.actual_start = Some(date(v)?) },
             "actual_finish" => if v.is_empty() { p.clear.push("actual_finish".into()) } else { p.actual_finish = Some(date(v)?) },
+            "hold" => if v.is_empty() { p.clear.push("hold".into()) } else { return Err("set a hold with plan status TASK review|blocked [NOTE]; hold= (empty) clears it".into()) },
             _ => return Err(format!("unknown key: {k}")),
         }
     }
@@ -367,7 +371,7 @@ fn plan_engines_patch(t: &mut TaskSpec, p: &TaskPatch) {
     if let Some(v) = &p.name { t.name = v.clone(); } if let Some(v) = &p.short { t.short = v.clone(); } if let Some(v) = &p.story { t.story = v.clone(); }
     if let Some(v) = &p.ticket { t.ticket = v.clone(); } if let Some(v) = &p.deliverable { t.deliverable = v.clone(); } if let Some(v) = &p.note { t.note = v.clone(); }
     if let Some(v) = &p.group { t.group = v.clone(); } if p.owners.is_some() { t.owners = p.owners.clone(); } if let Some(v) = &p.after { t.after = v.clone(); }
-    t.effort = p.effort.clone(); t.wait = p.wait.clone(); t.needs = p.needs.clone().unwrap_or_default(); t.prod = p.prod.unwrap_or(false); t.normalize(); t.done = p.done.unwrap_or(false); t.not_before = p.not_before; t.fixed = p.fixed; t.actual_start = p.actual_start; t.actual_finish = p.actual_finish;
+    t.effort = p.effort.clone(); t.wait = p.wait.clone(); t.needs = p.needs.clone().unwrap_or_default(); t.prod = p.prod.unwrap_or(false); t.normalize(); t.done = p.done.unwrap_or(false); t.not_before = p.not_before; t.fixed = p.fixed; t.actual_start = p.actual_start; t.actual_finish = p.actual_finish; t.hold = p.hold.clone();
 }
 
 fn edit(epic: &str, ops: Vec<EditOp>) {
@@ -381,7 +385,7 @@ fn main() {
     if std::env::args().any(|a| a == "--json") { JSON.store(true, Ordering::Relaxed); }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut pos = vec![];
-    let (mut s, mut r, mut e, mut port, mut open, mut key) = (None, None, None, 0u16, true, None);
+    let (mut s, mut r, mut e, mut port, mut open, mut key, mut on) = (None, None, None, 0u16, true, None, None::<String>);
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -389,10 +393,11 @@ fn main() {
             "-r" | "--rate" => { i += 1; r = args.get(i).cloned() }
             "-e" | "--est" => { i += 1; e = args.get(i).cloned() }
             "--key" => { i += 1; key = args.get(i).cloned() }
+            "--date" => { i += 1; on = args.get(i).cloned() }
             "--port" => { i += 1; port = args.get(i).and_then(|x| x.parse().ok()).unwrap_or(0) }
             "--no-open" => open = false,
             "--json" => {}
-            "-h" | "--help" => { println!("{}", include_str!("main.rs").lines().take(15).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n")); return }
+            "-h" | "--help" => { println!("{}", include_str!("main.rs").lines().take(16).map(|l| l.trim_start_matches("//!")).collect::<Vec<_>>().join("\n")); return }
             x => pos.push(x.to_string()),
         }
         i += 1;
@@ -448,17 +453,24 @@ fn main() {
         }
         "load" => load(pos.get(1).map(String::as_str)),
         "next" | "today" => agenda(&cmd, pos.get(1).map(String::as_str)),
-        "start" | "finish" => {
-            let step = if cmd == "start" { progress::Step::Start } else { progress::Step::Finish };
-            let day = pos.get(2).map(|v| date(v).unwrap_or_else(|m| die(&[Issue::error(m)])));
-            let d = progress::record(step, &a(1), None, day, None, "cli").unwrap_or_else(|e| die(&e));
+        "start" | "finish" | "status" => {
+            let (to, day, note) = if cmd == "status" {
+                let to = Status::parse(&a(2)).unwrap_or_else(|| die(&[Issue::error(format!("status is todo, doing, review, blocked or done, not {:?}", a(2)))]));
+                (to, on.as_ref().map(|v| date(v).unwrap_or_else(|m| die(&[Issue::error(m)]))), pos.get(3..).map(|v| v.join(" ")).unwrap_or_default())
+            } else {
+                (if cmd == "start" { Status::Doing } else { Status::Done }, pos.get(2).map(|v| date(v).unwrap_or_else(|m| die(&[Issue::error(m)]))), String::new())
+            };
+            let d = progress::record(to, &a(1), None, day, &note, None, "cli").unwrap_or_else(|e| die(&e));
             if json() { return say("", d); }
             if d["changed"] == serde_json::json!(false) {
                 println!("several tasks match; use the id:");
                 for c in d["candidates"].as_array().unwrap() { println!("- {} {} ({}) {}", c["id"].as_str().unwrap(), c["name"].as_str().unwrap(), c["epic"].as_str().unwrap(), c["ticket"].as_str().unwrap()); }
                 return;
             }
-            println!("{} {}: {}\n{}", cmd, d["task"]["id"].as_str().unwrap(), d["task"].get("actual_start").or(d["task"].get("actual_finish")).and_then(|v| v.as_str()).unwrap_or(""), impact_text(&d["impact"]));
+            let tk = &d["task"];
+            let since = tk["hold"]["since"].as_str().or(if to == Status::Done { tk["actual_finish"].as_str() } else { tk["actual_start"].as_str() }).unwrap_or("");
+            let note = tk["hold"]["note"].as_str().map(|n| format!(" ({n})")).unwrap_or_default();
+            println!("{} {}: {}{note}\n{}", tk["id"].as_str().unwrap(), to.code(), since, impact_text(&d["impact"]));
             if let Ok(t) = serde_json::from_value::<AgendaTask>(d["next"]["next"].clone()) { println!("next: {}", agenda_line(&t)); }
         }
         "log" => {

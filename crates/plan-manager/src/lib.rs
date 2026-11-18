@@ -3,7 +3,7 @@
 use plan_access::{CalendarAccess, PlanAccess};
 use std::sync::Arc;
 use plan_contracts::*;
-use plan_engines::{agenda, analysis, estimation, scenario, scheduling};
+use plan_engines::{agenda, analysis, estimation, scenario, scheduling, status};
 
 pub struct PlanningManager {
     plan_access: Arc<dyn PlanAccess + Send + Sync>,
@@ -123,6 +123,13 @@ impl PlanEditingManager {
     pub fn new(plan_access: Arc<dyn PlanAccess + Send + Sync>) -> Self { PlanEditingManager { plan_access } }
 
     pub fn epics(&self) -> Result<Vec<EpicSummary>, Vec<Issue>> { self.plan_access.list_epics() }
+
+    /// The edits that move a base task to a status (what they write comes from the status rules); apply them with apply
+    pub fn status_ops(&self, epic: &str, task: &str, to: Status, date: Option<chrono::NaiveDate>, today: chrono::NaiveDate, note: &str) -> Result<Vec<EditOp>, Vec<Issue>> {
+        let p = self.plan_access.read_plan(epic)?;
+        let t = p.tasks.iter().find(|t| t.id == task).ok_or_else(|| vec![Issue::error(format!("no task {task} in {epic}"))])?;
+        Ok(vec![EditOp::SetTask { key: t.id.clone(), patch: status::transition(t, to, date, today, note), scenario: None }])
+    }
     pub fn plan(&self, epic: &str) -> Result<Plan, Vec<Issue>> { self.plan_access.read_plan(epic) }
     pub fn create_epic(&self, key: &str, name: &str, start: chrono::NaiveDate, actor: &str) -> Result<(), Vec<Issue>> { self.plan_access.create_epic(key, name, start, actor) }
     pub fn delete_epic(&self, key: &str, actor: &str) -> Result<(), Vec<Issue>> { self.plan_access.delete_epic(key, actor) }
@@ -179,12 +186,15 @@ fn run(l: &Loaded, sc: &Scenario, rate: f64, est: EstKind, changes: &[Change]) -
             group: spec.group.clone(), note: spec.note.clone(), kind: t.kind, owners: t.owners.clone(), after: t.after.clone(),
             reduced_after: s.reduced_after[i].clone(), needs: t.needs.clone(), dur: ch.and_then(|c| c.dur).unwrap_or(t.dur), val: t.val, base_dur: t.dur,
             release: scheduling::release(t, &l.cal, None).0, es: s.es[i], ef: s.ef[i], tf: s.tf[i], ff: s.ff[i], color: a.colors[i], why: s.why[i].clone(),
-            done: spec.done, actual_start: spec.actual_start, actual_finish: spec.actual_finish,
+            done: spec.done, actual_start: spec.actual_start, actual_finish: spec.actual_finish, hold: spec.hold.clone(),
+            status: status::of(spec.done, spec.actual_start, spec.hold.as_ref()),
         }
-    }).collect();
+    }).collect::<Vec<TaskView>>();
+    let story_status = l.plan.stories.iter().map(|st| (st.key.clone(), status::roll_up(views.iter().filter(|t| t.story == st.key).map(|t| t.status)))).collect();
+    let epic_status = status::roll_up(views.iter().map(|t| t.status));
     Ok(RunResult {
         key: run_key(&sc.key, rate, est), scenario: sc.key.clone(), rate, est, tasks: views, end: s.end, target: a.target_slot,
         slack_to_deadline: a.slack_to_deadline, risk: a.risk, effort: a.effort, effort_total: a.effort_total, efficiency: a.efficiency,
-        load: a.load, critical_path: a.critical_path,
+        load: a.load, critical_path: a.critical_path, status: epic_status, story_status,
     })
 }

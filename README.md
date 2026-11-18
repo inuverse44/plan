@@ -4,7 +4,7 @@ Schedule planning for small teams and their AI assistants. Describe a project as
 
 - **One calculation, two places.** The scheduler is Rust. The CLI runs it natively; the browser runs the same code as WebAssembly, so dragging a bar re-plans instantly.
 - **AI friendly.** Every command speaks JSON (`--json`), edits are batched and atomic (`plan apply`), and every change is logged with who made it.
-- **Plans only.** `plan` does not track status. Keep your tickets in your issue tracker and link them from task comments.
+- **Plans and status in one place.** A task is to do, in progress, in review, blocked or done; stories and epics roll up from their tasks. A blocked task shows up as a risk with the float it is eating. Links to tickets elsewhere are plain URLs in comments.
 
 The method follows Juval Löwy, *Righting Software*, part 2 (project design): activity network, critical path, float-based coloring, multiple design options and risk metrics.
 
@@ -39,6 +39,9 @@ plan task rm KEY T1
 plan dep add KEY TASK PRED | dep rm KEY TASK PRED   # loops are refused
 plan story set KEY S1 name=… purpose=… dod=…
 plan scenario clone KEY FROM|- NEWKEY "Name" | scenario rm KEY SC
+plan start TASK [DATE] | plan finish TASK [DATE]   # record progress; TASK is an id, a ticket or part of a name, across epics
+plan status TASK review|blocked|doing|todo|done [NOTE] [--date D]   # move a task; NOTE: who or what it waits for
+plan next [PERSON] | plan today [PERSON]       # what to do now; today adds late starts, due this week, in review or blocked, risks
 plan apply KEY ops.json                      # apply a list of edits at once; any error writes nothing ("-" for stdin)
 plan export KEY out.html                     # a single self-contained HTML page (interactive, read-only)
 plan serve [--port N] [--no-open]            # the UI and its HTTP API
@@ -84,6 +87,8 @@ plan1 · 1.0 · e: target 2026-12-17 → 2027-01-20, finish 2026-12-22 → 2027-
 |---|---|
 | `epics`, `dump`, `show`, `calc`, `why`, `check`, `log`, `load` | the commands of the same name (read only) |
 | `apply` | `plan apply` (all edits or none). The history records them as `mcp` |
+| `next`, `today` | the commands of the same name |
+| `start`, `finish`, `status` | the commands of the same name |
 | `delete_epic` | `plan epic rm` (its content stays in the history) |
 
 ```sh
@@ -117,6 +122,24 @@ All stores apply edits the same way: read → apply the edits → validate (no d
 | Comment on a task or story | the Comments box in the side panel (URLs become links) | Enter |
 
 Moves are re-planned at once; the original position stays as a dashed outline. **Save** writes `not_before` and the new effort or wait to the current scenario.
+
+## Status
+
+Status is derived, never stored, so it cannot drift from the dates. A task keeps `done`, `actual_start`, `actual_finish` and an optional `hold`:
+
+| Condition (top to bottom) | Status |
+|---|---|
+| `done` | done |
+| `hold.kind = "blocked"` | blocked: stopped by something not in the plan |
+| `hold.kind = "review"` | in review |
+| `actual_start` | in progress |
+| otherwise | to do |
+
+`plan status` (and the MCP tool `status`, the status box in the UI) writes what goes with a status: in progress and in review set the actual start if missing, in review and blocked record since when and the note, done marks the task done with its actual finish and clears the hold, to do clears all of these.
+
+A story's status and the epic's come from their tasks: all done → done; any blocked → blocked; any started → in progress; otherwise to do.
+
+Blocked is not `wait`: a wait is planned (an approval that takes 3 days) and has its own bar; blocked is an unplanned stop. The schedule treats review and blocked tasks as not done; `plan today` lists them, reports every blocked task as a risk and a review open for 3 days or more.
 
 ## How the schedule is computed
 
@@ -157,6 +180,7 @@ The Help page in the UI shows the formulas with references.
 | | `effort` or `wait` | person-days or business days; a number or a triple. Neither = milestone |
 | | `owner`, `after` | owner(s), predecessors |
 | | `needs`, `not_before`, `fixed`, `done`, `actual_start`, `actual_finish` | resources it needs, earliest start, fixed date, done, actual dates (drawn as grey bars; marking a task done without `actual_finish` records today) |
+| | `hold` | `{ kind = "review" \| "blocked", since = "YYYY-MM-DD", note = "…" }` (see Status) |
 
 Older plans with `prod = true` and `calendar.freeze` still read: they become `needs = ["prod"]` and `[resources.prod]` (label "Release freeze"), and are written back in the new form.
 | `[scenarios.KEY]` | `name`, `note`, `drop`, `set.ID`, `add` | alternative plans as differences from the base |

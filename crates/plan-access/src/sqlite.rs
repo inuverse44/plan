@@ -83,7 +83,7 @@ impl SqlitePlans {
         let conn = Connection::open(path).map_err(e)?;
         conn.execute_batch(SCHEMA).map_err(e)?;
         // Columns added later (added to old databases too; no-op if present)
-        for col in ["actual_start", "actual_finish", "needs"] {
+        for col in ["actual_start", "actual_finish", "needs", "hold"] {
             let has: bool = conn.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name=?").map_err(e)?.exists([col]).map_err(e)?;
             if !has { conn.execute_batch(&format!("ALTER TABLE tasks ADD COLUMN {col} TEXT")).map_err(e)?; }
         }
@@ -138,14 +138,14 @@ impl SqlitePlans {
         for x in c.prepare("SELECT task, pred FROM deps WHERE epic=? ORDER BY sort").map_err(e)?.query_map([epic], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))).map_err(e)? {
             let (t, p) = x.map_err(e)?; deps.entry(t).or_default().push(p);
         }
-        let tasks = c.prepare("SELECT key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, needs, not_before, fixed, done, actual_start, actual_finish FROM tasks WHERE epic=? ORDER BY sort").map_err(e)?
+        let tasks = c.prepare("SELECT key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, needs, not_before, fixed, done, actual_start, actual_finish, hold FROM tasks WHERE epic=? ORDER BY sort").map_err(e)?
             .query_map([epic], |r| {
                 let id: String = r.get(0)?;
                 Ok(TaskSpec {
                     after: deps.get(&id).cloned().unwrap_or_default(), story: r.get(1)?, name: r.get(2)?, short: r.get(3)?, ticket: r.get(4)?, deliverable: r.get(5)?,
                     group: r.get(6)?, note: r.get(7)?, effort: est_col(r, 8)?, wait: est_col(r, 9)?,
                     owners: json_col(r, 10)?, needs: json_col(r, 11)?.unwrap_or_default(), prod: false,
-                    not_before: date_col(r, 12)?, fixed: date_col(r, 13)?, done: r.get(14)?, actual_start: date_col(r, 15)?, actual_finish: date_col(r, 16)?, unknown_keys: vec![], id,
+                    not_before: date_col(r, 12)?, fixed: date_col(r, 13)?, done: r.get(14)?, actual_start: date_col(r, 15)?, actual_finish: date_col(r, 16)?, hold: json_col(r, 17)?, unknown_keys: vec![], id,
                 })
             }).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(|x| e(format!("tasks of {epic}: {x}")))?;
         let scenarios = c.prepare("SELECT key, name, note, drop_tasks, sets, adds FROM scenarios WHERE epic=? ORDER BY sort").map_err(e)?
@@ -181,10 +181,10 @@ impl SqlitePlans {
             tx.execute("INSERT INTO stories (epic, key, name, purpose, dod, sort) VALUES (?,?,?,?,?,?)", params![k, s.key, s.name, s.purpose, s.dod, i as i64])?;
         }
         for (i, t) in p.tasks.iter().enumerate() {
-            tx.execute("INSERT INTO tasks (epic, key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, needs, not_before, fixed, done, actual_start, actual_finish, sort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            tx.execute("INSERT INTO tasks (epic, key, story, name, short, ticket, deliverable, grp, note, effort, wait, owners, needs, not_before, fixed, done, actual_start, actual_finish, hold, sort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 params![k, t.id, t.story, t.name, t.short, t.ticket, t.deliverable, t.group, t.note, est_to(&t.effort), est_to(&t.wait),
                     t.owners.as_ref().map(|o| serde_json::to_string(o).unwrap()), (!t.needs.is_empty()).then(|| serde_json::to_string(&t.needs).unwrap()), t.not_before.map(|x| x.to_string()), t.fixed.map(|x| x.to_string()), t.done,
-                    t.actual_start.map(|x| x.to_string()), t.actual_finish.map(|x| x.to_string()), i as i64])?;
+                    t.actual_start.map(|x| x.to_string()), t.actual_finish.map(|x| x.to_string()), t.hold.as_ref().map(|h| serde_json::to_string(h).unwrap()), i as i64])?;
             for (j, pr) in t.after.iter().enumerate() { tx.execute("INSERT OR IGNORE INTO deps (epic, task, pred, sort) VALUES (?,?,?,?)", params![k, t.id, pr, (i * 100 + j) as i64])?; }
         }
         for (i, s) in p.scenarios.iter().enumerate() {

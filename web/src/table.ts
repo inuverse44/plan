@@ -3,10 +3,10 @@ P.views.table = function (el: HTMLElement, ctx: ViewCtx) {
   const { esc, mdw, S } = P;
   const run = ctx.run;
   const rows = run.tasks.filter(t => !ctx.owner || t.owners.includes(ctx.owner)).sort((a, b) => a.es - b.es);
-  let h = '<table><thead><tr><th>ID</th><th>Task</th><th>Deliverable</th><th>Ticket</th><th>Owner</th><th>Effort</th><th>Wait</th><th>After</th><th>Start</th><th>Finish</th><th>Float</th><th>Driven by</th></tr></thead><tbody>';
+  let h = '<table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Deliverable</th><th>Ticket</th><th>Owner</th><th>Effort</th><th>Wait</th><th>After</th><th>Start</th><th>Finish</th><th>Float</th><th>Driven by</th></tr></thead><tbody>';
   for (const t of rows) {
     const v = t.dur / 2 * (t.kind === 'work' ? Number(run.rate) * Math.max(t.owners.length, 1) : 1);
-    h += `<tr data-id="${esc(t.id)}" class="${ctx.sel === t.id ? 'sel' : ''}"><td class="n">${esc(t.id)}</td><td>${esc(t.name)}</td><td>${esc(t.deliverable)}</td><td class="n">${esc(t.ticket)}</td><td>${esc(t.owners.join(', '))}</td>` +
+    h += `<tr data-id="${esc(t.id)}" class="${ctx.sel === t.id ? 'sel' : ''}"><td class="n">${esc(t.id)}</td><td>${esc(t.name)}</td><td>${P.STATUS(t.status, t.hold)}</td><td>${esc(t.deliverable)}</td><td class="n">${esc(t.ticket)}</td><td>${esc(t.owners.join(', '))}</td>` +
       `<td class="n">${t.kind === 'work' ? P.num(v) : ''}</td><td class="n">${t.kind === 'wait' ? P.num(v) : ''}</td><td class="n">${esc(t.after.join(', '))}</td>` +
       `<td class="n">${mdw(S.start(t.es))} ${S.half(t.es)}</td><td class="n">${t.dur ? mdw(S.end(t.ef)) + ' ' + S.endHalf(t.ef) : ''}</td>` +
       `<td class="n" style="color:var(${P.COLOR[t.color]})">${t.tf == null ? '—' : t.tf / 2}${t.tf === 0 ? ' ●' : ''}</td><td>${esc(t.why)}</td></tr>`;

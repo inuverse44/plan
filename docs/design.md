@@ -4,13 +4,13 @@
 
 Make schedule planning cheap enough to redo whenever something changes: write the plan once, compare options in seconds, and let an AI assistant read and edit the plan as safely as a person.
 
-Non-goals: tracking status, assigning work, syncing with issue trackers. Tickets stay in the tracker; a task links to them through `ticket` or a comment.
+Non-goals: assigning work, syncing with issue trackers. A task may point to a ticket elsewhere through `ticket` or a comment.
 
 ## Decisions
 
 | Topic | Decision | Why |
 |---|---|---|
-| Scope | Calculation and display only | Status already has an owner (the issue tracker); two sources of truth drift |
+| Scope | Plans and their status | The tracker may not outlive the work, and status next to the schedule shows a slip as lost float. To keep one source of truth, status is derived from `done`, the actual dates and a `hold` (review or blocked), never stored on its own (#48) |
 | Unit | Epic > story > task. Only tasks are scheduled; stories and epics are containers | Matches how work is broken down in trackers |
 | Language | Rust for everything that computes; TypeScript for the UI | One scheduler. The browser runs the same Rust as WebAssembly, so drag-and-drop re-plans with the exact rules the CLI uses |
 | UI framework | None | The views are SVG redrawn from computed results; state is small. A framework would add a dependency chain without paying for itself |
@@ -31,6 +31,7 @@ The structure follows *The Method* (Löwy, *Righting Software*, part 1): each ar
 | How durations are estimated (PERT, rounding, utilization) | medium | `EstimationEngine` |
 | How tasks are placed (people, resources and their off periods, ordering rule) | medium | `SchedulingEngine` |
 | How a plan is judged (float colors, risk metrics, lint, what to do next) | medium | `AnalysisEngine` (`analysis`, `agenda`) |
+| What status means: how it is read, rolled up, and what a change of status writes | medium | `AnalysisEngine` (`status`) |
 | Where the calendar comes from (holiday rules) | low | `CalendarAccess` |
 
 Stable: the unit of calculation is one epic; dependencies stay inside an epic; time is counted in business half-days.

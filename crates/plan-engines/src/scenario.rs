@@ -48,8 +48,10 @@ fn apply(t: &mut TaskSpec, p: &TaskPatch) {
     if p.fixed.is_some() { t.fixed = p.fixed; }
     if p.actual_start.is_some() { t.actual_start = p.actual_start; }
     if p.actual_finish.is_some() { t.actual_finish = p.actual_finish; }
+    if p.hold.is_some() { t.hold = p.hold.clone(); }
     for c in &p.clear {
         match c.as_str() {
+            "hold" => t.hold = None,
             "actual_start" => t.actual_start = None,
             "actual_finish" => t.actual_finish = None,
             "not_before" => t.not_before = None,

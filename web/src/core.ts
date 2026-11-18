@@ -82,5 +82,9 @@ const P = (() => {
   const NEEDS = (needs: string[], x: number, y: number, s = 11) => needs.length ? `<path d="M${x} ${y - s / 2}l${s / 2} ${s / 2}l${-s / 2} ${s / 2}l${-s / 2} ${-s / 2}z" fill="none" stroke="${css('--red')}" stroke-width="1.6"><title>${esc(needsTip(needs))}</title></path>` : '';
 
   const views: Record<string, View> = {};
-  return { $, css, esc, D, iso, md, mdw, pct, num, COLOR, COLOR_NAME, S, index, succOf, related, legend, LEGEND, ICON, toast, NEEDS, views };
+  // Status: a word, with color only as a second signal (blocked red, review amber, done and to do muted)
+  const STATUS_NAME: Record<Status, string> = { todo: 'To do', doing: 'In progress', review: 'In review', blocked: 'Blocked', done: 'Done' };
+  const STATUS_VAR: Record<Status, string> = { todo: '--muted', doing: '--fg', review: '--yellow', blocked: '--red', done: '--done' };
+  const STATUS = (s: Status, hold?: Hold | null) => `<span class="status st-${s}" style="color:var(${STATUS_VAR[s]})"${hold ? ` title="since ${hold.since}${hold.note ? ': ' + esc(hold.note) : ''}"` : ''}>${STATUS_NAME[s]}</span>`;
+  return { $, css, esc, D, iso, md, mdw, pct, num, COLOR, STATUS, STATUS_NAME, COLOR_NAME, S, index, succOf, related, legend, LEGEND, ICON, toast, NEEDS, views };
 })();
