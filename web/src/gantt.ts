@@ -68,7 +68,7 @@ function ownerCell(owners: string[], x: number, y: number) {
 
 // Stories / Tasks switch (top left of the Gantt)
 // A story's rolled-up status, right-aligned in the label area (to do shows nothing)
-const storyMark = (s: Status, x: number, y: number) => `<text class="story-status" x="${x}" y="${y}" text-anchor="end" font-size="11" fill="${P.css(s === 'blocked' ? '--red' : s === 'done' ? '--done' : '--muted')}">${P.STATUS_NAME[s]}</text>`;
+const storyMark = (s: Status, x: number, y: number) => `<text class="story-status" x="${x}" y="${y}" text-anchor="end" font-size="11" fill="${P.css(s === 'blocked' ? '--red' : '--muted')}">${P.STATUS_NAME[s]}</text>` + P.MARK(s, x - P.STATUS_NAME[s].length * 6.2 - 9, y - 4, 4.5);
 const ganttLevel = (ctx: ViewCtx) => `<div class="seg small" style="margin-bottom:8px" role="group" aria-label="Gantt level">${[['story', 'Stories'], ['task', 'Tasks']].map(([v, l]) => `<button data-level="${v}" aria-pressed="${ctx.level === v}">${l}</button>`).join('')}</div>`;
 const wireLevel = (el: HTMLElement, ctx: ViewCtx) => el.querySelectorAll<HTMLElement>('[data-level]').forEach(b => b.onclick = () => ctx.setLevel(b.dataset.level as 'story' | 'task'));
 
@@ -124,11 +124,11 @@ P.views.ganttStories = function (el: HTMLElement, ctx: ViewCtx) {
       bars += `<rect x="${x1}" y="${y + 6}" width="${w}" height="${rh - 12}" rx="4" fill="${sp.color === 'wait' ? 'url(#hatch)' : css(P.COLOR[sp.color])}" style="cursor:pointer"><title>${esc(tip)}</title></rect>`;
       if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
       bars += `<text x="${x1 + w + 8}" y="${y + 21}" font-size="11.5" style="fill:${css('--muted')}">${sp.n}</text>`;
-      if (stat && stat !== 'todo') bars += `<text class="story-status" x="${x1 + w + 30}" y="${y + 21}" font-size="11.5" font-weight="${stat === 'blocked' ? 600 : 400}" style="fill:${css(stat === 'blocked' ? '--red' : '--muted')}">${P.STATUS_NAME[stat]}</text>`;
+      if (stat && stat !== 'todo') bars += P.MARK(stat, x1 + w + 32, y + rh / 2, 4.5) + `<text class="story-status" x="${x1 + w + 42}" y="${y + 21}" font-size="11.5" font-weight="${stat === 'blocked' ? 600 : 400}" style="fill:${css(stat === 'blocked' ? '--red' : '--muted')}">${P.STATUS_NAME[stat]}</text>`;
     }
     bars += `</g>`;
   });
-  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND();
+  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND() + P.STATUS_LEGEND();
   wireLevel(el, ctx); wireTips(el);
   el.querySelectorAll<SVGGElement>('.story-row').forEach(g => g.addEventListener('click', () => g.dataset.story ? ctx.selectStory(g.dataset.story) : null));
 };
@@ -205,14 +205,24 @@ P.views.gantt = function (el: HTMLElement, ctx: ViewCtx) {
       bars += `<rect class="${t.kind === 'done' ? '' : 'bar'}" data-id="${k}" x="${x1}" y="${y + 6}" width="${w}" height="${rh - 12}" rx="4" fill="${fill}"
         stroke="${crit ? css('--f-crit') : (ctx.sel === k ? css('--focus') : 'none')}" stroke-width="${crit ? 2 : 2}" ${crit && !wait ? `stroke-opacity=".0"` : ''}><title>${esc(tip)}</title></rect>`;
       if (crit) bars += `<rect x="${x1 - 2}" y="${y + 4}" width="${w + 4}" height="${rh - 8}" rx="5" fill="none" stroke="${css('--f-crit')}" stroke-width="1.5" pointer-events="none"/>`;
-      if (t.hold) bars += `<text class="hold-mark" x="${x1 + w + (ctx.editable && (ctx.focus === k || ctx.sel === k) ? 24 : 6)}" y="${y + 21}" font-size="11" font-weight="600" fill="${css(t.hold.kind === 'blocked' ? '--red' : '--yellow')}">${t.hold.kind === 'blocked' ? 'Blocked' : 'In review'}</text>`;
+      // Status: the outline's line type (in progress solid, in review dashed, blocked thick red), a mark after the bar, and for work under way a line from the actual start to today
+      const stLine = t.status === 'doing' ? `stroke="${css('--fg')}" stroke-width="1.5"` : t.status === 'review' ? `stroke="${css('--fg')}" stroke-width="1.5" stroke-dasharray="4 3"` : t.status === 'blocked' ? `stroke="${css('--red')}" stroke-width="2.5"` : '';
+      // outside the bar (beyond the critical outline), so it reads on dark and light bars alike
+      if (stLine) bars += `<rect class="st-outline st-${t.status}" x="${x1 - 4}" y="${y + 2}" width="${w + 8}" height="${rh - 4}" rx="6" fill="none" ${stLine} pointer-events="none"/>`;
+      if (t.actual_start && t.status !== 'done' && t.status !== 'todo') {
+        const a = Math.max(lw, xd(t.actual_start)), b = xd(iso(new Date())) + dw / 2;
+        if (b > a) bars += `<line class="st-progress" x1="${a}" y1="${y + rh - 3}" x2="${b}" y2="${y + rh - 3}" stroke="${css('--fg')}" stroke-width="2" pointer-events="none"/>`;
+      }
+      const mx = x1 + w + (ctx.editable && (ctx.focus === k || ctx.sel === k) ? 24 : 9);
+      bars += P.MARK(t.status, mx + 5, y + rh / 2);
+      if (t.hold) bars += `<text class="hold-mark" x="${mx + 14}" y="${y + 21}" font-size="11" font-weight="600" fill="${css(t.hold.kind === 'blocked' ? '--red' : '--fg')}">${t.hold.kind === 'blocked' ? 'Blocked' : 'In review'}</text>`;
       if (t.kind !== 'done') bars += `<rect class="rz" data-id="${k}" x="${x1 + w - 6}" y="${y + 6}" width="12" height="${rh - 12}" fill="transparent"/>`;
       // Link handle: drag from here onto another task
       if (ctx.editable && (ctx.focus === k || ctx.sel === k)) bars += `<circle class="link" data-id="${k}" cx="${x1 + w + 12}" cy="${y + rh / 2}" r="6" fill="${css('--surface')}" stroke="${css('--accent')}" stroke-width="2" style="cursor:crosshair"><title>Drag onto the task that should follow</title></circle>`;
     }
     bars += `</g>`;
   }
-  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND();
+  el.innerHTML = ganttLevel(ctx) + `<div style="overflow-x:auto">${s}${deps}${bars}${over}</svg></div>` + P.LEGEND() + P.STATUS_LEGEND();
   wireLevel(el, ctx); wireTips(el);
 
   const svg = el.querySelector<SVGSVGElement>('#gsvg')!;

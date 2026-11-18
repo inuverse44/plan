@@ -86,5 +86,15 @@ const P = (() => {
   const STATUS_NAME: Record<Status, string> = { todo: 'To do', doing: 'In progress', review: 'In review', blocked: 'Blocked', done: 'Done' };
   const STATUS_VAR: Record<Status, string> = { todo: '--muted', doing: '--fg', review: '--yellow', blocked: '--red', done: '--done' };
   const STATUS = (s: Status, hold?: Hold | null) => `<span class="status st-${s}" style="color:var(${STATUS_VAR[s]})"${hold ? ` title="since ${hold.since}${hold.note ? ': ' + esc(hold.note) : ''}"` : ''}>${STATUS_NAME[s]}</span>`;
-  return { $, css, esc, D, iso, md, mdw, pct, num, COLOR, STATUS, STATUS_NAME, COLOR_NAME, S, index, succOf, related, legend, LEGEND, ICON, toast, NEEDS, views };
+  // Status marks: shapes, not emoji (the same in every font). Centered on (x, y); dark, blocked red; a halo keeps them readable on bars
+  const MARK_PATH: Record<Status, (r: number) => string> = {
+    todo: () => '',
+    doing: r => `<path d="M${-r * .7} ${-r}L${r} 0L${-r * .7} ${r}z"/>`,
+    review: r => `<circle r="${r}" fill="none" stroke-width="1.4"/><path d="M0 ${-r}A${r} ${r} 0 0 1 0 ${r}z"/>`,
+    blocked: r => `<rect x="${-r * .85}" y="${-r * .85}" width="${r * 1.7}" height="${r * 1.7}"/>`,
+    done: r => `<path d="M${-r} 0L${-r * .3} ${r * .7}L${r} ${-r * .8}" fill="none" stroke-width="2"/>`,
+  };
+  const MARK = (s: Status, x: number, y: number, r = 5) => s === 'todo' ? '' : `<g class="st-mark st-${s}" transform="translate(${x} ${y})" fill="${css(s === 'blocked' ? '--red' : '--fg')}" stroke="${css(s === 'blocked' ? '--red' : '--fg')}" stroke-width="0" pointer-events="none">${MARK_PATH[s](r)}</g>`;
+  const STATUS_LEGEND = () => `<div class="legend">${(['doing', 'review', 'blocked', 'done'] as Status[]).map(x => `<span><svg width="12" height="12" viewBox="-6 -6 12 12" aria-hidden="true">${MARK(x, 0, 0, 5)}</svg>${STATUS_NAME[x]}</span>`).join('')}</div>`;
+  return { $, css, esc, D, iso, md, mdw, pct, num, COLOR, STATUS, STATUS_NAME, MARK, STATUS_LEGEND, COLOR_NAME, S, index, succOf, related, legend, LEGEND, ICON, toast, NEEDS, views };
 })();

@@ -75,6 +75,11 @@ a.logo:hover{opacity:.85}
 .side .links button{border:1px solid var(--line);background:var(--surface-2);border-radius:6px;padding:2px 8px;min-height:26px;font-size:12px}
 .side .close{float:right;border:0;background:none;min-width:28px;min-height:28px;font-size:18px;line-height:1;color:var(--muted)}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:10px}
+.legend svg{vertical-align:-1px;margin-right:5px}
+/* In progress: light dots flow along the arrow, the way the work goes. Still under reduced motion */
+@keyframes flow{to{stroke-dashoffset:-12}}
+.flow{animation:flow .9s linear infinite}
+@media (prefers-reduced-motion: reduce){.flow{animation:none}}
 .sw{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
 svg text{fill:var(--fg);font-family:var(--sans)}
 .bar{cursor:grab;touch-action:none} .bar.dragging{cursor:grabbing}

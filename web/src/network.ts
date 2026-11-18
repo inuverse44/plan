@@ -120,18 +120,25 @@ P.views.net = function (el: HTMLElement, ctx: ViewCtx) {
     }
     const sw = e.dummy ? 1 : (crit ? 3 : 1.8), dash = !t ? '2 4' : t.kind === 'wait' ? '6 4' : '';
     s += `<path d="${d}" fill="none" stroke="${css(P.COLOR[stroke])}" stroke-width="${isSel ? sw + 1 : sw}" ${dash ? `stroke-dasharray="${dash}"` : ''} opacity="${op}" marker-end="url(#m-${stroke})" ${e.id ? `data-id="${e.id}" style="cursor:pointer"` : ''}>${t ? `<title>${esc(t.name)}</title>` : ''}</path>`;
+    // In progress: light dots flow along the arrow (the arrow's own color stays; nothing new to tell apart)
+    if (t && t.status === 'doing') s += `<path class="flow st-flow" d="${d}" fill="none" stroke="${css('--surface')}" stroke-width="${Math.max(1.2, sw - 1)}" stroke-linecap="round" stroke-dasharray="0.1 5.9" opacity="${op}" pointer-events="none"/>`;
     if (e.id && e.dummy !== true) s += `<path d="${d}" fill="none" stroke="transparent" stroke-width="14" data-id="${e.id}" style="cursor:pointer"/>`;
     if (e.id && t && lab) labels.push({ ...lab, id: e.id, t, op, crit });
   }
   for (const n of real) { const p = Pn[n], big = n === 'S' || n === 'F'; s += `<circle cx="${p.x}" cy="${p.y}" r="${big ? 7 : 4}" fill="${big ? css('--fg') : css('--surface')}" stroke="${css('--fg')}" stroke-width="1.5"/>` }
   for (const l of labels) {
     const text = l.t.short || l.t.name;
-    const w = [...text].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 12 : 7), 0) + (l.t.needs.length ? 18 : 8);
-    s += `<g opacity="${l.op}" data-id="${l.id}" style="cursor:pointer"><rect x="${l.x - w / 2}" y="${l.y - 20}" width="${w}" height="17" rx="4" fill="${css('--surface')}" opacity=".92"/>` +
-      P.NEEDS(l.t.needs, l.x - w / 2 + 9, l.y - 11.5, 9) +
-      `<text x="${l.x + (l.t.needs.length ? 6 : 0)}" y="${l.y - 7.5}" font-size="12" text-anchor="middle" font-weight="${l.crit ? 600 : 400}">${esc(text)}</text><title>${esc(l.t.name)}</title></g>`;
+    // Status: a mark before the name; the label's outline is dashed in review, thick red when blocked
+    const st = l.t.status, mk = st !== 'todo' ? 14 : 0;
+    const w = [...text].reduce((a, c) => a + (c.charCodeAt(0) > 0x2e80 ? 12 : 7), 0) + (l.t.needs.length ? 18 : 8) + mk;
+    const box = st === 'review' ? `stroke="${css('--fg')}" stroke-width="1.2" stroke-dasharray="3 2"` : st === 'blocked' ? `stroke="${css('--red')}" stroke-width="2"` : '';
+    const x0 = l.x - w / 2;
+    s += `<g opacity="${l.op}" data-id="${l.id}" style="cursor:pointer"><rect class="${box ? `st-box st-${st}` : ''}" x="${x0}" y="${l.y - 20}" width="${w}" height="17" rx="4" fill="${css('--surface')}" fill-opacity=".92" ${box}/>` +
+      P.MARK(st, x0 + 9, l.y - 11.5, 4) +
+      P.NEEDS(l.t.needs, x0 + mk + 9, l.y - 11.5, 9) +
+      `<text x="${l.x + (l.t.needs.length ? 6 : 0) + mk / 2}" y="${l.y - 7.5}" font-size="12" text-anchor="middle" font-weight="${l.crit ? 600 : 400}">${esc(text)}</text><title>${esc(l.t.name)}${st !== 'todo' ? ' · ' + P.STATUS_NAME[st] : ''}</title></g>`;
   }
-  el.innerHTML = `<div style="display:flex;justify-content:center">${s}</svg></div>` + P.LEGEND();
+  el.innerHTML = `<div style="display:flex;justify-content:center">${s}</svg></div>` + P.LEGEND() + P.STATUS_LEGEND();
   const svg = el.querySelector<SVGSVGElement>('#nsvg')!;
   svg.querySelectorAll<SVGElement>('[data-id]').forEach(n => {
     n.addEventListener('mouseenter', () => ctx.hover(n.dataset.id!));

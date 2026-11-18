@@ -1,5 +1,7 @@
 // Each case comes from a real change; the issue number is in its title.
 import { expect, test } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 import { barX, center, cli, open, openEpic } from './helpers';
 
 const tip = (page: import('@playwright/test').Page) => page.locator('#gtip');
@@ -149,5 +151,26 @@ test.describe('Status (#48)', () => {
     await page.locator('#side select[data-f="status"]').selectOption('done');
     await expect(page.locator('g[data-id="PACK"] .hold-mark')).toHaveCount(0);
     await expect.poll(() => cli('dump', 'status')).toMatch(/id = "PACK"[\s\S]*?done = true\nactual_finish = "2026-11-18"\n(?!hold)/);
+  });
+});
+
+test.describe('Status in the Gantt and the network (#49)', () => {
+  test('a task in progress gets a solid outline, a mark and flowing dots on its arrow; blocked gets a red outline', async ({ page }) => {
+    // BOOK and MOVE are in every fixture epic, so the edits name the epic
+    cli('task', 'set', 'visual', 'BOOK', 'actual_start=2026-11-16');
+    const ops = path.join(__dirname, '../.tmp/visual-ops.json');
+    fs.writeFileSync(ops, JSON.stringify([{ op: 'set_task', key: 'MOVE', patch: { hold: { kind: 'blocked', since: '2026-11-18', note: 'the elevator' } } }]));
+    cli('apply', 'visual', ops);
+    await openEpic(page, 'visual');
+    await expect(page.locator('g[data-id="BOOK"] .st-outline.st-doing')).toHaveCount(1);
+    await expect(page.locator('g[data-id="BOOK"] .st-mark.st-doing')).toHaveCount(1);
+    await expect(page.locator('g[data-id="BOOK"] .st-progress')).toHaveCount(1);
+    await expect(page.locator('g[data-id="MOVE"] .st-outline.st-blocked')).toHaveCount(1);
+    await expect(page.locator('.legend').last()).toContainText('In progress');
+
+    await page.keyboard.press('2');
+    await expect(page.locator('#nsvg .st-flow')).toHaveCount(1);
+    await expect(page.locator('#nsvg g[data-id="MOVE"] .st-box.st-blocked')).toHaveCount(1);
+    await expect(page.locator('#nsvg g[data-id="BOOK"] .st-mark.st-doing')).toHaveCount(1);
   });
 });
